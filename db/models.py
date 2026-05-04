@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from enum import Enum
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Boolean, Integer, Enum as SQLEnum
+from sqlalchemy import Column, Numeric, String, DateTime, ForeignKey, Text, Boolean, Integer, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship, declarative_base
 
@@ -57,6 +57,7 @@ class Appointment(Base):
     salon_id = Column(UUID(as_uuid=True), ForeignKey("salons.id"), nullable=False)
     client_id = Column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
     stylist_id = Column(UUID(as_uuid=True), ForeignKey("stylists.id"), nullable=False)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("services.id"))
     
     start_time = Column(DateTime(timezone=True), nullable=False)
     end_time = Column(DateTime(timezone=True), nullable=False)
@@ -89,3 +90,14 @@ class SessionState(Base):
     current_step = Column(String(50)) 
     context_data = Column(Text) # JSON string con datos temporales de la cita
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class Service(Base):
+    __tablename__ = "services"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    salon_id = Column(UUID(as_uuid=True), ForeignKey("salons.id"))
+    name = Column(String, nullable=False)        # Ejemplo: "Corte de Cabello"
+    category = Column(String)                   # Ejemplo: "Peluquería"
+    price = Column(Numeric(10, 2))              # Ejemplo: 15.00
+    duration_minutes = Column(Integer, default=30) # ¡Vital para la disponibilidad!
+    is_active = Column(Boolean, default=True)

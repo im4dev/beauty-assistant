@@ -36,3 +36,17 @@ class SessionManager:
             session_state.context_data = json.dumps(old_context)
         
         await self.db.commit()
+
+    async def update_session(self, session, step: str, context: dict = None):
+        session.current_step = step
+        if context:
+            # Recuperamos lo que ya había para no borrarlo
+            existing_data = json.loads(session.context_data) if session.context_data else {}
+            # Mezclamos con lo nuevo
+            existing_data.update(context)
+            session.context_data = json.dumps(existing_data)
+        
+        # ¡VITAL! Sin esto, el cambio solo vive en la memoria de Python
+        self.db.add(session)
+        await self.db.commit()
+        await self.db.refresh(session)

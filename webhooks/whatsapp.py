@@ -1,13 +1,17 @@
 from fastapi import APIRouter, Request, HTTPException, Query
+from httpcore import request
 from core.orchestrator import Orchestrator
 from webhooks.verify import verify_signature
 from tenants.resolver import resolve_tenant
+from services.whatsapp_client import WhatsAppClient
 from db.connection import AsyncSessionLocal
+import time
 import logging
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
+wa_client = WhatsAppClient()
 
 # ─── Verificación del webhook (Meta lo llama una vez al configurar) ───────────
 
@@ -50,6 +54,22 @@ async def receive_message(request: Request):
       }]
     }
     """
+    data = await request.json()
+
+    # Extract Meta timestamp (coming in seconds)
+    entry = data.get("entry", [{}])[0]
+    changes = entry.get("changes", [{}])[0]
+    value = changes.get("value", {})
+    message = value.get("messages", [{}])[0]
+    
+    msg_timestamp = int(message.get("timestamp", 0))
+    current_time = int(time.time())
+
+    # REGLA DE ORO: Si el mensaje tiene más de 120 segundos, no lo proceses
+    if current_time - msg_timestamp > 120:
+        print("⏳ Ignorando mensaje antiguo para evitar spam.")
+        return {"status": "ignored"}
+    
     # 1. Validar firma de Meta (seguridad)
     body_bytes = await request.body()
     signature = request.headers.get("X-Hub-Signature-256", "")
@@ -96,7 +116,7 @@ async def receive_message(request: Request):
                         salon_id=tenant.id  # El ID del salón que resolvió tu tenants/resolver.py
                     )
                     
-                    # 6. (Próximamente) Aquí enviarías response_text de vuelta a WhatsApp
-                    print(f"🤖 Respuesta generada: {response_text}")
-
+                    # 2. SEND THE ACTUAL RESPONSE TO WHATSAPP 🚀    
+                    if response_text:   
+                        await wa_client.send_text_message(sender_phone, response_text)  
     return {"status": "ok"}
