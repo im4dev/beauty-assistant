@@ -43,6 +43,20 @@ services:
     networks:
       - app-network
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: im2developer@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: aB3xYz-kM_9pQ2wL-vNj
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+    networks:
+      - app-network
+    restart: always
+
 volumes:
   postgres_data:
 
