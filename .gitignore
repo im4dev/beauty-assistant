@@ -1,3 +1,4 @@
 
 .env
 *.pyc
+beauty-key.pem
