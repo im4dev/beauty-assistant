@@ -68,11 +68,14 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          envs: GITHUB_SHA
           script: |
             mkdir -p ~/beauty-assistant
             cd ~/beauty-assistant
-            echo "IMAGE_NAME=${{ env.REGISTRY }}/${{ needs.build-and-push.outputs.image-name }}" > .env.deploy
+            IMAGE_NAME="${{ env.REGISTRY }}/${{ needs.build-and-push.outputs.image-name }}"
+            echo "IMAGE_NAME=$IMAGE_NAME" > .env.deploy
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
-            docker compose --env-file .env.deploy pull
+            for i in {1..3}; do
+              docker compose --env-file .env.deploy pull && break
+              sleep 10
+            done
             docker compose --env-file .env.deploy up -d
