@@ -1,6 +1,9 @@
 services:
   app:
-    image: ${IMAGE_NAME:-beauty-assistant}:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: beauty-assistant:latest
     container_name: beauty-assistant
     ports:
       - "8000:8000"
