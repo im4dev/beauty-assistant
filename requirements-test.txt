@@ -1,0 +1,17 @@
+# Dependencias de Testing para Beauty Assistant
+
+# Framework de testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+# Async database driver para tests (SQLite)
+aiosqlite==0.19.0
+
+# Mocking
+pytest-mock==3.12.0
+
+# Coverage
+pytest-cov==4.1.0
+
+# Utilidades adicionales
+faker==20.1.0

@@ -64,8 +64,23 @@ class Appointment(Base):
     status = Column(SQLEnum(AppointmentStatus), default=AppointmentStatus.SCHEDULED)
     service_name = Column(String(255)) # Ej: "Corte de cabello"
     
+    # Recordatorios
+    reminder_24h_sent = Column(Boolean, default=False)
+    reminder_1h_sent = Column(Boolean, default=False)
+    
     client = relationship("Client", back_populates="appointments")
     stylist = relationship("Stylist", back_populates="appointments")
+    service = relationship("Service")
+
+class WaitlistRequestType(str, Enum):
+    FLEXIBLE = "flexible"
+    SPECIFIC = "specific"
+
+class WaitlistStatus(str, Enum):
+    WAITING = "waiting"
+    OFFERED = "offered"
+    REJECTED = "rejected"
+    NO_RESPONSE = "no_response"
 
 class Waitlist(Base):
     __tablename__ = "waitlist"
@@ -74,9 +89,24 @@ class Waitlist(Base):
     salon_id = Column(UUID(as_uuid=True), ForeignKey("salons.id"), nullable=False)
     client_id = Column(UUID(as_uuid=True), ForeignKey("clients.id"), nullable=False)
     
-    preferred_date = Column(DateTime, nullable=False)
+    # Tipo de solicitud
+    request_type = Column(SQLEnum(WaitlistRequestType), nullable=False)
+    
+    # Para FLEXIBLE: sin preferencias específicas
+    # Para SPECIFIC: preferencias exactas
+    preferred_date = Column(DateTime, nullable=True)
+    preferred_time = Column(String(5), nullable=True)  # HH:MM format
+    preferred_stylist_id = Column(UUID(as_uuid=True), ForeignKey("stylists.id"), nullable=True)
+    preferred_service_id = Column(UUID(as_uuid=True), ForeignKey("services.id"), nullable=True)
+    
+    # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Estado
     is_notified = Column(Boolean, default=False)
+    rejection_count = Column(Integer, default=0)
+    status = Column(SQLEnum(WaitlistStatus), default=WaitlistStatus.WAITING)
 
 class SessionState(Base):
     """Guarda el contexto de la conversación con el LLM"""

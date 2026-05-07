@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beauty Assistant - Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .login-container {
+            max-width: 400px;
+            margin: 60px auto;
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            text-align: center;
+        }
+
+        .login-container h1 {
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .login-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .login-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .error-message {
+            color: #e74c3c;
+            font-size: 14px;
+            margin-top: 10px;
+            display: none;
+        }
+
+        /* Dashboard */
+        .dashboard {
+            display: none;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 28px;
+        }
+
+        .header-info {
+            display: flex;
+            gap: 30px;
+            font-size: 14px;
+        }
+
+        .header-info div {
+            color: #666;
+        }
+
+        .header-info strong {
+            color: #333;
+            display: block;
+            font-size: 20px;
+            margin-bottom: 4px;
+        }
+
+        .logout-btn {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .logout-btn:hover {
+            background: #c0392b;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .stat-card .number {
+            font-size: 32px;
+            font-weight: bold;
+            color: #667eea;
+            margin: 10px 0;
+        }
+
+        .stat-card .label {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .appointments-section {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .appointments-section h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 20px;
+        }
+
+        .filters {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .filters input {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .filters select {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .refresh-btn {
+            background: #27ae60;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .refresh-btn:hover {
+            background: #229954;
+        }
+
+        .appointments-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .appointments-table th {
+            background: #f8f9fa;
+            padding: 12px;
+            text-align: left;
+            color: #333;
+            font-weight: 600;
+            border-bottom: 2px solid #ddd;
+            font-size: 14px;
+        }
+
+        .appointments-table td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .appointments-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-confirmed {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-cancelled {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-no_show {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-completed {
+            background: #cce5ff;
+            color: #004085;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+
+        .empty-state p {
+            margin: 10px 0;
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                flex-direction: column;
+                gap: 20px;
+                text-align: center;
+            }
+
+            .header-info {
+                width: 100%;
+                justify-content: space-around;
+            }
+
+            .appointments-table {
+                font-size: 12px;
+            }
+
+            .appointments-table th,
+            .appointments-table td {
+                padding: 8px;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Login -->
+    <div class="login-container" id="loginContainer">
+        <h1>Beauty Assistant</h1>
+        <form id="loginForm" onsubmit="handleLogin(event)">
+            <div class="form-group">
+                <label for="username">Usuario:</label>
+                <input type="text" id="username" placeholder="admin" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Contraseña:</label>
+                <input type="password" id="password" placeholder="Tu contraseña" required>
+            </div>
+            <button type="submit" class="login-btn">Ingresar</button>
+            <div class="error-message" id="errorMessage"></div>
+        </form>
+    </div>
+
+    <!-- Dashboard -->
+    <div class="dashboard" id="dashboard">
+        <div class="header">
+            <div>
+                <h1>Beauty Assistant</h1>
+                <select id="salonSelector" onchange="changeSalon()"
+                    style="margin-top: 10px; padding: 8px; border-radius: 6px; border: 1px solid #ddd; font-size: 14px;">
+                    <option value="">Cargando salones...</option>
+                </select>
+            </div>
+            <div class="header-info">
+                <div>
+                    <strong id="todayDate">-</strong>
+                    Hoy
+                </div>
+                <div>
+                    <strong id="totalToday">0</strong>
+                    Citas hoy
+                </div>
+            </div>
+            <button class="logout-btn" onclick="logout()">Cerrar sesión</button>
+        </div>
+
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="label">Confirmadas (7 días)</div>
+                <div class="number" id="statConfirmed">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Canceladas (7 días)</div>
+                <div class="number" id="statCancelled">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">No-shows (7 días)</div>
+                <div class="number" id="statNoShow">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Completadas (7 días)</div>
+                <div class="number" id="statCompleted">0</div>
+            </div>
+        </div>
+
+        <div class="appointments-section">
+            <h2>Citas de hoy</h2>
+            <div class="filters">
+                <input type="date" id="filterDate" onchange="loadAppointments()">
+                <select id="filterStatus" onchange="loadAppointments()">
+                    <option value="">Todos los estados</option>
+                    <option value="confirmed">Confirmada</option>
+                    <option value="cancelled">Cancelada</option>
+                    <option value="no_show">No-show</option>
+                    <option value="completed">Completada</option>
+                </select>
+                <button class="refresh-btn" onclick="loadAppointments()">Actualizar</button>
+            </div>
+
+            <div id="appointmentsLoading" class="loading" style="display: none;">Cargando citas...</div>
+
+            <table class="appointments-table" id="appointmentsTable" style="display: none;">
+                <thead>
+                    <tr>
+                        <th>Hora</th>
+                        <th>Cliente</th>
+                        <th>Estilista</th>
+                        <th>Servicio</th>
+                        <th>Duración</th>
+                        <th>Estado</th>
+                    </tr>
+                </thead>
+                <tbody id="appointmentsBody">
+                </tbody>
+            </table>
+
+            <div class="empty-state" id="emptyState" style="display: none;">
+                <p>No hay citas para esta fecha.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let currentSalonId = null;
+        let currentToken = null;
+
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            setTimeout(() => {
+                errorDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        function setToday() {
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('filterDate').value = today;
+            document.getElementById('todayDate').textContent = new Date().toLocaleDateString('es-ES', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const btn = event.target.querySelector('button');
+
+            btn.disabled = true;
+            btn.textContent = 'Cargando...';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Credenciales inválidas');
+                }
+
+                const data = await response.json();
+
+                localStorage.setItem('username', username);
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('authenticated', 'true');
+
+                document.getElementById('loginContainer').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+
+                setToday();
+                loadSalons();
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Ingresar';
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch(
+                    `${API_BASE}/api/salons/${currentSalonId}/stats?days=7`
+                );
+                const data = await response.json();
+
+                document.getElementById('statConfirmed').textContent = data.confirmed;
+                document.getElementById('statCancelled').textContent = data.cancelled;
+                document.getElementById('statNoShow').textContent = data.no_show;
+                document.getElementById('statCompleted').textContent = data.completed;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        async function loadAppointments() {
+            const date = document.getElementById('filterDate').value;
+            connectSSE(date); // Re-conectar SSE para la nueva fecha
+        }
+
+        function logout() {
+            localStorage.removeItem('username');
+            localStorage.removeItem('token');
+            localStorage.removeItem('authenticated');
+            currentSalonId = null;
+            currentToken = null;
+            document.getElementById('loginContainer').style.display = 'block';
+            document.getElementById('dashboard').style.display = 'none';
+            document.getElementById('loginForm').reset();
+        }
+
+        let eventSource = null;
+
+        // Restaurar sesión si existe
+        window.addEventListener('load', () => {
+            const authenticated = localStorage.getItem('authenticated');
+            if (authenticated) {
+                currentToken = localStorage.getItem('token');
+                document.getElementById('loginContainer').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+                setToday();
+                loadSalons();
+            }
+        });
+
+        async function loadSalons() {
+            try {
+                // Obtener todos los salones desde Supabase
+                const response = await fetch(`${API_BASE}/api/salons`, {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+
+                if (!response.ok) throw new Error('Error al cargar salones');
+
+                const data = await response.json();
+                const selector = document.getElementById('salonSelector');
+                selector.innerHTML = '';
+
+                if (data.salons && data.salons.length > 0) {
+                    data.salons.forEach(salon => {
+                        const option = document.createElement('option');
+                        option.value = salon.id;
+                        option.textContent = salon.name;
+                        selector.appendChild(option);
+                    });
+
+                    // Seleccionar el primero por defecto
+                    currentSalonId = selector.value;
+                    loadStats();
+                    connectSSE();  // <-- Conectar SSE en lugar de polling
+                } else {
+                    selector.innerHTML = '<option value="">No hay salones disponibles</option>';
+                }
+            } catch (error) {
+                showError('Error al cargar salones');
+                console.error(error);
+            }
+        }
+
+        function changeSalon() {
+            currentSalonId = document.getElementById('salonSelector').value;
+            if (currentSalonId) {
+                loadStats();
+                // Desconectar SSE anterior y conectar la nueva
+                if (eventSource) eventSource.close();
+                connectSSE();
+            }
+        }
+
+        // SSE: Conexión en tiempo real con el servidor
+        function connectSSE(date = null) {
+            if (!currentSalonId) return;
+
+            // Cerrar conexión anterior si existe
+            if (eventSource) eventSource.close();
+
+            const targetDate = date || document.getElementById('filterDate').value;
+            console.log('Conectando SSE para salon:', currentSalonId, 'Fecha:', targetDate);
+
+            eventSource = new EventSource(
+                `${API_BASE}/api/salons/${currentSalonId}/appointments/stream?date=${targetDate}`
+            );
+
+            eventSource.onmessage = function (event) {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    if (data.appointments) {
+                        const tbody = document.getElementById('appointmentsBody');
+                        tbody.innerHTML = '';
+
+                        if (data.appointments.length === 0) {
+                            document.getElementById('appointmentsTable').style.display = 'none';
+                            document.getElementById('emptyState').style.display = 'block';
+                            document.getElementById('totalToday').textContent = '0';
+                            return;
+                        }
+
+                        data.appointments.forEach(apt => {
+                            const row = document.createElement('tr');
+                            const time = new Date(apt.start_time).toLocaleTimeString('es-ES', {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            });
+
+                            const statusClass = `status-${apt.status}`;
+                            const statusText = {
+                                scheduled: 'Programada',
+                                cancelled: 'Cancelada',
+                                rescheduled: 'Reagendada',
+                                completed: 'Completada'
+                            }[apt.status] || apt.status;
+
+                            row.innerHTML = `
+                                <td>${time}</td>
+                                <td>${apt.client_name}</td>
+                                <td>${apt.stylist_name}</td>
+                                <td>${apt.service_name}</td>
+                                <td>${apt.duration_minutes.toFixed(0)} min</td>
+                                <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                            `;
+                            tbody.appendChild(row);
+                        });
+
+                        document.getElementById('totalToday').textContent = data.appointments.length;
+                        document.getElementById('appointmentsTable').style.display = 'table';
+                        document.getElementById('emptyState').style.display = 'none';
+                    }
+                } catch (e) {
+                    console.error('Error parsing SSE:', e);
+                }
+            };
+
+            eventSource.onerror = function (error) {
+                console.error('SSE connection error:', error);
+                eventSource.close();
+
+                // Reconectar después de 3 segundos
+                setTimeout(() => {
+                    console.log('Reconectando SSE...');
+                    connectSSE();
+                }, 3000);
+            };
+        }
+    </script>
+</body>
+
+</html>

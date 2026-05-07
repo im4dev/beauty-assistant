@@ -6,3 +6,4 @@ asyncpg
 stages
 python-dotenv==1.0.1
 openai
+supabase==2.29.0

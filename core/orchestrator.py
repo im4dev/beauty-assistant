@@ -2,30 +2,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from core.session import SessionManager
 from core.llm import LLMService
-from datetime import datetime
+from datetime import datetime, timedelta
 from services.availability import AvailabilityService
+from appointments.create import AppointmentCreator
+from appointments.reschedule import AppointmentRescheduler
+from appointments.cancel import AppointmentCanceller
+from notifications.sender import NotificationSender
 import json
 
-from db.models import Appointment, AppointmentStatus, Client, Service, Stylist
+from db.models import Appointment, AppointmentStatus, Client, Service, Stylist, Salon
+import zoneinfo
 
 class Orchestrator:
     def __init__(self, db_session: AsyncSession):
         self.db = db_session
         self.session_manager = SessionManager(db_session)
         self.llm = LLMService()
+        self.notification_sender = NotificationSender()
 
     async def handle_message(self, phone_number: str, message_text: str, salon_id: str):
         intent = "UNKNOWN"
         entities = {}
-        # 1. Recuperar sesión y cliente
+        # 1. Recuperar sesión, cliente y salón (para timezone)
+        
         session = await self.session_manager.get_or_create(phone_number, salon_id)
         
         result = await self.db.execute(
             select(Client).where(Client.wa_id == phone_number, Client.salon_id == salon_id)
         )
         client = result.scalar_one_or_none()
+        
+        salon_res = await self.db.execute(select(Salon).where(Salon.id == salon_id))
+        salon = salon_res.scalar_one_or_none()
+        salon_tz_str = salon.timezone if salon and salon.timezone else "UTC"
+        salon_tz = zoneinfo.ZoneInfo(salon_tz_str)
 
-        now = datetime.now()
+        now = datetime.now(salon_tz)
 
         # 2. FLUJO DE REGISTRO (Si no existe el cliente o estamos esperando el nombre)
         if not client or session.current_step == "AWAITING_NAME":
@@ -51,6 +63,10 @@ class Orchestrator:
             )
         )
         active_appointment = appointment_res.scalar_one_or_none()
+        if active_appointment:
+            print(f"DEBUG: Cita activa encontrada para {phone_number}: {active_appointment.id} ({active_appointment.start_time})")
+        else:
+            print(f"DEBUG: No se encontró cita activa para {phone_number}")
         # ---------------------------------
 
         # 3. PREPARAR CONTEXTO Y CATÁLOGO
@@ -63,135 +79,199 @@ class Orchestrator:
         catalogo_str = "\n".join([f"- {s.name}: ${s.price} ({s.duration_minutes} min)" for s in db_services])
         
         history_list = current_context.get("last_messages", [])
+        history_list.append({"role": "user", "content": message_text})
+        if len(history_list) > 10:
+            history_list = history_list[-10:]
+            
         history_text = "\n".join([f"{m['role']}: {m['content']}" for m in history_list])
 
         # 4. ANÁLISIS DEL LLM
+        current_entities = {
+            "service": current_context.get("service"),
+            "datetime_iso": current_context.get("datetime_iso")
+        }
+
+        if active_appointment:
+            fecha_cita = active_appointment.start_time.astimezone(salon_tz).strftime('%d/%m a las %H:%M')
+            history_text += f"\nSYSTEM: El usuario ya tiene una cita agendada para el {fecha_cita}. Si el usuario quiere cambiar de hora o día, es un RESCHEDULE. Si el usuario quiere cancelar su cita, es un CANCEL_APPOINTMENT."
+
         analysis = await self.llm.analyze_message(
             message_text=message_text,
+            client_name=client.name,
+            current_entities=current_entities,
             context_services=catalogo_str,
             history=history_text,
-            current_step=session.current_step
+            current_step=session.current_step,
+            salon_timezone=salon_tz_str
         )
 
         # 5. Extraer intent y entidades
-        intent = analysis.get("intent") or "UNKNOWN"
-        entities = analysis.get("entities", {}) or {}
+        intent = analysis.get("intent", "UNKNOWN")
+        entities = analysis.get("entities", {})
+        response_message = analysis.get("response_message", "Lo siento, hubo un pequeño problema técnico. ¿Me puedes repetir?")
 
-        # 2. Verificación de cita única (se aplica antes de procesar BOOK_APPOINTMENT)
-        if intent == "BOOK_APPOINTMENT" and active_appointment:
-            fecha_cita = active_appointment.start_time.strftime('%d/%m a las %H:%M')
-            return (
-                f"¡Hola, {client.name}! Veo que ya tienes una cita agendada para el **{fecha_cita}**. "
-                "Por ahora, solo puedes tener una cita activa a la vez. \n\n"
-                "¿Te gustaría cancelarla para agendar una nueva o prefieres mantenerla?"
-            )
-
-        # 4. CONFIRM: Crear la cita real inmediatamente
-        if intent == "CONFIRM":
-            if session.current_step != "CONFIRMING_APPOINTMENT":
-                return "¿Qué cita quieres confirmar? Primero dime el servicio y la fecha/hora para agendar."
-
-            data = current_context
-            service_name = data.get("service")
-            dt_iso = data.get("datetime_iso")
-            if not service_name or not dt_iso:
-                await self.session_manager.update_step(session, "IDLE", context={})
-                return "Me faltan datos para agendar. ¿Qué servicio te gustaría y para qué día y hora?"
-
+        # --- LÓGICA TWO-PASS PARA DISPONIBILIDAD ---
+        dt_iso = entities.get("datetime_iso") or current_context.get("datetime_iso")
+        needs_reanalysis = False
+        
+        if dt_iso:
             try:
                 from datetime import timedelta
-
                 start_dt = datetime.fromisoformat(dt_iso)
-
-                service_res = await self.db.execute(
-                    select(Service).where(Service.name == service_name, Service.salon_id == salon_id)
-                )
-                service_obj = service_res.scalar_one_or_none()
-                duration = service_obj.duration_minutes if service_obj else 30
-
-                stylist_id = "89274902-6011-4770-b77c-619f71c45686"
-                stylist_res = await self.db.execute(
-                    select(Stylist).where(Stylist.id == stylist_id, Stylist.salon_id == salon_id)
-                )
-                stylist_obj = stylist_res.scalar_one_or_none()
-                if not stylist_obj:
-                    await self.db.rollback()
-                    return "No pude asignar estilista para tu cita. ¿Podrías intentarlo de nuevo?"
-
-                new_app = Appointment(
-                    salon_id=salon_id,
-                    client_id=client.id,
-                    stylist_id=stylist_obj.id,
-                    service_id=service_obj.id if service_obj else None,
-                    service_name=service_name,
-                    start_time=start_dt,
-                    end_time=start_dt + timedelta(minutes=duration),
-                    status=AppointmentStatus.SCHEDULED
-                )
-                self.db.add(new_app)
-                await self.db.commit()
-
-                await self.session_manager.update_step(session, "IDLE", context={})
-
-                return (
-                    f"¡Listo, {client.name}! ✅ Tu cita para **{service_name}** ha sido agendada para el "
-                    f"{start_dt.strftime('%d/%m a las %H:%M')}. ¡Te esperamos!"
-                )
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=salon_tz)
+                
+                duration = 30
+                if current_context.get("service") or entities.get("service"):
+                    srv_name = entities.get("service") or current_context.get("service")
+                    srv_res = await self.db.execute(select(Service).where(Service.name == srv_name, Service.salon_id == salon_id))
+                    srv_obj = srv_res.scalar_one_or_none()
+                    if srv_obj:
+                        duration = srv_obj.duration_minutes
+                
+                if intent == "CHECK_AVAILABILITY":
+                    slots = await AvailabilityService.get_available_slots(self.db, str(salon_id), start_dt.date(), duration)
+                    history_text += f"\nSYSTEM: El usuario pregunta disponibilidad para {start_dt.date()}. Los horarios libres son: {', '.join(slots) if slots else 'Ninguno'}. Infórmale."
+                    needs_reanalysis = True
+                else:
+                    # Validar disponibilidad real en BD si está agendando o reprogramando
+                    exclude_id = active_appointment.id if active_appointment else None
+                    is_ok, msg = await AvailabilityService.check_availability(self.db, str(salon_id), start_dt, duration, exclude_appointment_id=exclude_id)
+                    
+                    if not is_ok:
+                        slots = await AvailabilityService.get_available_slots(self.db, str(salon_id), start_dt.date(), duration)
+                        history_text += f"\nSYSTEM: La hora solicitada ({start_dt.strftime('%H:%M')}) no es válida o ya está ocupada: {msg}. Los horarios libres para ese día son: {', '.join(slots) if slots else 'Ninguno'}. Pídele que elija uno de esos horarios."
+                        entities["datetime_iso"] = None
+                        needs_reanalysis = True
             except Exception as e:
-                print(f"❌ Error al crear cita: {e}")
-                await self.db.rollback()
-                return "Hubo un problema técnico al guardar tu cita. ¿Podrías intentarlo de nuevo?"
+                print(f"Error parseando fecha para availability: {e}")
+                
+        if needs_reanalysis:
+            analysis = await self.llm.analyze_message(
+                message_text=message_text,
+                client_name=client.name,
+                current_entities=current_entities,
+                context_services=catalogo_str,
+                history=history_text,
+                current_step=session.current_step,
+                salon_timezone=salon_tz_str
+            )
+            intent = analysis.get("intent", intent)
+            entities = analysis.get("entities", entities)
+            response_message = analysis.get("response_message", response_message)
+        # -------------------------------------------
 
-        # --- AQUÍ VA EL CAMBIO CLAVE: ACUMULAR ENTIDADES ---
-        # Si el LLM encontró algo nuevo, lo sumamos a lo que ya teníamos guardado
+        # 6. Actualizar Contexto con nuevas entidades encontradas
         if entities.get("service"):
             current_context["service"] = entities["service"]
         if entities.get("datetime_iso"):
             current_context["datetime_iso"] = entities["datetime_iso"]
+
+        # Si el intent es BOOK_APPOINTMENT o RESCHEDULE y ya tenemos ambas cosas, pasamos a CONFIRMING
+        if intent in ["BOOK_APPOINTMENT", "RESCHEDULE"] and current_context.get("service") and current_context.get("datetime_iso"):
+            await self.session_manager.update_step(session, "CONFIRMING_APPOINTMENT")
         
-        # Persistimos el contexto actualizado de inmediato
+        # Si el intent es CANCEL_APPOINTMENT y tenemos cita activa, pasamos a CONFIRMING_CANCELLATION
+        if intent == "CANCEL_APPOINTMENT" and active_appointment:
+            await self.session_manager.update_step(session, "CONFIRMING_CANCELLATION")
+
+        # 7. Ejecutar acción de CONFIRM o DECLINE si aplica
+        if intent == "DECLINE":
+            print(f"DEBUG: Intent DECLINE detectado. Reseteando sesión a IDLE.")
+            await self.session_manager.update_step(session, "IDLE")
+            current_context["service"] = None
+            current_context["datetime_iso"] = None
+
+        # Si el intent es CONFIRM (o CANCEL_APPOINTMENT pero ya estábamos confirmando)
+        if intent == "CONFIRM" or (intent == "CANCEL_APPOINTMENT" and session.current_step == "CONFIRMING_CANCELLATION"):
+            print(f"DEBUG: Ejecutando confirmación. Intent: {intent}, Step actual: {session.current_step}")
+            if session.current_step == "CONFIRMING_CANCELLATION":
+                if active_appointment:
+                    try:
+                        print(f"DEBUG: Cancelando cita ID: {active_appointment.id}")
+                        success, msg = await AppointmentCanceller.cancel_appointment(
+                            self.db, active_appointment, trigger_waitlist=True
+                        )
+                        if success:
+                            current_context = {}
+                            await self.session_manager.update_step(session, "IDLE", context=current_context)
+                            response_message = msg
+                            # Enviar notificación al cliente
+                            await self.notification_sender.notify_appointment_cancelled(
+                                phone_number,
+                                active_appointment.start_time.astimezone(salon_tz).strftime('%d/%m a las %H:%M')
+                            )
+                            print(f"DEBUG: Cita cancelada con éxito.")
+                        else:
+                            response_message = f"Hubo un problema al cancelar: {msg}"
+                    except Exception as e:
+                        print(f"❌ Error al cancelar cita: {e}")
+                        await self.db.rollback()
+                        response_message = "Hubo un problema técnico al intentar cancelar tu cita. ¿Podrías intentarlo de nuevo?"
+                else:
+                    print(f"DEBUG: No se encontró cita activa para cancelar en step CONFIRMING_CANCELLATION.")
+            
+            elif session.current_step == "CONFIRMING_APPOINTMENT":
+                service_name = current_context.get("service")
+                dt_iso = current_context.get("datetime_iso")
+                
+                if service_name and dt_iso:
+                    try:
+                        start_dt = datetime.fromisoformat(dt_iso)
+                        if start_dt.tzinfo is None:
+                            start_dt = start_dt.replace(tzinfo=salon_tz)
+                        
+                        if active_appointment:
+                            # REPROGRAMAR CITA
+                            success, msg = await AppointmentRescheduler.reschedule_appointment(
+                                self.db, active_appointment, start_dt, service_name
+                            )
+                            if success:
+                                current_context = {}
+                                await self.session_manager.update_step(session, "IDLE", context=current_context)
+                                response_message = msg
+                                # Enviar notificación de confirmación
+                                await self.notification_sender.notify_appointment_confirmed(
+                                    phone_number,
+                                    service_name,
+                                    start_dt.astimezone(salon_tz).strftime('%d/%m a las %H:%M')
+                                )
+                            else:
+                                current_context["datetime_iso"] = None
+                                response_message = msg
+                        else:
+                            # AGENDAR NUEVA CITA
+                            success, msg, new_appointment = await AppointmentCreator.create_appointment(
+                                self.db,
+                                salon_id=salon_id,
+                                client_id=str(client.id),
+                                service_name=service_name,
+                                start_time=start_dt
+                            )
+                            if success:
+                                current_context = {}
+                                await self.session_manager.update_step(session, "IDLE", context=current_context)
+                                response_message = msg
+                                # Enviar notificación de confirmación
+                                await self.notification_sender.notify_appointment_confirmed(
+                                    phone_number,
+                                    service_name,
+                                    start_dt.astimezone(salon_tz).strftime('%d/%m a las %H:%M')
+                                )
+                            else:
+                                current_context["datetime_iso"] = None
+                                response_message = msg
+                    except Exception as e:
+                        print(f"❌ Error al crear/actualizar cita: {e}")
+                        await self.db.rollback()
+                        response_message = "Hubo un problema técnico al guardar tu cita. ¿Podrías intentarlo de nuevo?"
+
+        # --- GUARDAR HISTORIAL ---
+        history_list = current_context.get("last_messages", [])
+        history_list.append({"role": "assistant", "content": response_message})
+        current_context["last_messages"] = history_list
+
         session.context_data = json.dumps(current_context)
         await self.db.commit()
-        # --------------------------------------------------
 
-        # 5. LÓGICA DE RESPUESTA BASADA EN INTENCIONES
-        if intent == "GREETING":
-            if any(word in message_text.lower() for word in ["servicios", "precio", "qué haces", "tienes"]):
-                return f"¡Hola de nuevo, {client.name}! ✨ Ofrecemos:\n{catalogo_str}\n\n¿Te gustaría agendar?"
-            return f"¡Hola de nuevo, {client.name}! ✨ ¿En qué puedo ayudarte?"
-
-        elif intent == "ASK_SERVICES":
-            return f"¡Claro! Estos son nuestros servicios:\n{catalogo_str}\n\n¿Cuál te gustaría?"
-
-        elif intent == "BOOK_APPOINTMENT":
-            # Usamos los datos ACUMULADOS (current_context), no solo los del último mensaje
-            service = current_context.get("service")
-            dt_iso = current_context.get("datetime_iso")
-
-            # Caso A: Falta el servicio
-            if not service:
-                return f"¡Claro! ¿Qué servicio te gustaría realizarte? Tenemos:\n{catalogo_str}"
-
-            # Caso B: Falta la fecha o es inválida
-            if not dt_iso or "00:00:00" in dt_iso:
-                return f"Perfecto, un {service}. ¿Para qué día y hora? (Atendemos 9am-5pm)"
-
-            # Caso C: Tenemos ambos -> Validar y pedir confirmación
-            try:
-                requested_dt = datetime.fromisoformat(dt_iso)
-                is_ok, error_msg = AvailabilityService.is_within_business_hours(requested_dt)
-                
-                if not is_ok:
-                    # Si la hora está mal, borramos solo la fecha del contexto para que la pida de nuevo
-                    current_context["datetime_iso"] = None
-                    session.context_data = json.dumps(current_context)
-                    await self.db.commit()
-                    return f"{error_msg} ¿Podrías elegir otro horario?"
-
-                await self.session_manager.update_step(session, "CONFIRMING_APPOINTMENT")
-                return f"Confirmado: {service} para el {requested_dt.strftime('%d/%m a las %H:%M')}. ¿Te lo agendo?"
-
-            except ValueError:
-                return "Esa fecha se ve extraña, ¿me la repites?"
-
-        return "Lo siento, no entendí bien. ¿Quieres agendar una cita o ver los servicios?"
+        return response_message

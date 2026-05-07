@@ -16,9 +16,15 @@ class Settings(BaseSettings):
 
     # Base de datos
     DATABASE_URL: str = "sqlite+aiosqlite:///./beauty.db"
+    SUPABASE_URL: str = ""
+    SUPABASE_KEY: str = "" 
 
     # Servidor
     PORT: int = 8000
+
+    # Credenciales del dashboard
+    DASHBOARD_USERNAME: str = "admin"
+    DASHBOARD_PASSWORD: str = "admin"
 
     class Config:
         env_file = ".env"
