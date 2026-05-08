@@ -64,7 +64,7 @@ class LLMService:
                 REGLAS DE EXTRACCIÓN:
                 1. 'service': Debe coincidir EXACTAMENTE con el nombre en el catálogo. Si el usuario dice "pintarme el pelo", mapealo a "Tinte Completo" si existe.
                 2. 'datetime_iso': Convierte fechas relativas ("mañana", "el lunes") a formato ISO (YYYY-MM-DD HH:MM:SS). NO lo llenes si está fuera del horario de atención. Si el usuario solo menciona un día sin hora, pon "00:00:00" en la hora para extraer la fecha.
-                3. 'name': Extrae el nombre propio si el usuario se presenta.
+                3. 'name': Extrae el nombre propio si el usuario se presenta (ej: "Me llamo Isaias", "Mi nombre es Isaias", "Soy Isaias"), en todos estos casos el nombre es Isaias.
 
                 JSON FORMAT:
                 {{
