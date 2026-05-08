@@ -155,8 +155,11 @@ class Orchestrator:
                         if slots:
                             # Tomar el primero disponible que sea después de search_start
                             for s in slots:
-                                h, m = map(int, s.split(':'))
+                                # Limpiar AM/PM si existe para poder convertir a número
+                                clean_s = s.replace(' AM', '').replace(' PM', '')
+                                h, m = map(int, clean_s.split(':'))
                                 slot_dt = day_to_check.replace(hour=h, minute=m, second=0, microsecond=0)
+
                                 if slot_dt > now:
                                     found_slot = slot_dt
                                     break
@@ -216,8 +219,14 @@ class Orchestrator:
         # 6. Actualizar Contexto con nuevas entidades encontradas
         if entities.get("service"):
             current_context["service"] = entities["service"]
+        
         if entities.get("datetime_iso"):
-            current_context["datetime_iso"] = entities["datetime_iso"]
+            # Si la IA envía "ANY" pero ya tenemos una fecha real en el contexto, NO la sobreescribimos
+            if entities["datetime_iso"] == "ANY" and current_context.get("datetime_iso") and current_context["datetime_iso"] != "ANY":
+                pass 
+            else:
+                current_context["datetime_iso"] = entities["datetime_iso"]
+
 
         # Si el intent es BOOK_APPOINTMENT o RESCHEDULE y ya tenemos ambas cosas, pasamos a CONFIRMING
         if intent in ["BOOK_APPOINTMENT", "RESCHEDULE"] and current_context.get("service") and current_context.get("datetime_iso"):
