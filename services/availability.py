@@ -1,7 +1,7 @@
 from datetime import datetime, time, timedelta, date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from db.models import Appointment, AppointmentStatus
+from db.models import Appointment, AppointmentStatus, Stylist
 
 class AvailabilityService:
     # Configuración del Salón (Esto luego podría venir de la DB)
@@ -42,8 +42,18 @@ class AvailabilityService:
 
         end_time = requested_time + timedelta(minutes=duration_mins)
 
-        # Buscar superposiciones
-        query = select(Appointment).where(
+        # 1. Contar estilistas activos
+        from sqlalchemy import func
+        stylist_count_res = await db.execute(
+            select(func.count(Stylist.id)).where(Stylist.salon_id == salon_id, Stylist.is_active == True)
+        )
+        total_stylists = stylist_count_res.scalar() or 0
+        
+        if total_stylists == 0:
+            return False, "No hay estilistas activos en este salón."
+
+        # 2. Contar citas superpuestas
+        query = select(func.count(Appointment.id)).where(
             Appointment.salon_id == salon_id,
             Appointment.status == AppointmentStatus.SCHEDULED,
             Appointment.start_time < end_time,
@@ -52,11 +62,11 @@ class AvailabilityService:
         if exclude_appointment_id:
             query = query.where(Appointment.id != exclude_appointment_id)
             
-        res = await db.execute(query)
-        overlap = res.scalars().first()
+        overlap_res = await db.execute(query)
+        overlap_count = overlap_res.scalar() or 0
 
-        if overlap:
-            return False, "Ese horario ya se encuentra ocupado."
+        if overlap_count >= total_stylists:
+            return False, "Lo sentimos, no hay estilistas disponibles en este horario."
             
         return True, "Disponible"
 
@@ -72,6 +82,9 @@ class AvailabilityService:
         now_salon = datetime.now(tz)
         
         available_slots = []
+        from sqlalchemy import func
+        stylist_count_res = await db.execute(select(func.count(Stylist.id)).where(Stylist.salon_id == salon_id, Stylist.is_active == True))
+        total_stylists = stylist_count_res.scalar() or 0
         
         # Generar slots cada 30 min desde OPENING_TIME hasta CLOSING_TIME
         current_dt = datetime.combine(target_date, cls.OPENING_TIME).replace(tzinfo=tz)
@@ -101,18 +114,15 @@ class AvailabilityService:
                 slot_end = current_dt + timedelta(minutes=duration_mins)
                 
                 # Check overlap against appointments
-                overlap = False
+                overlap_count = 0
                 for appt in appointments:
-                    # Asyncpg always returns aware datetimes for timezone=True, so no replace needed
                     appt_start = appt.start_time
                     appt_end = appt.end_time
-                    
                     if appt_start < slot_end and appt_end > current_dt:
-                        overlap = True
-                        break
+                        overlap_count += 1
                         
                 # Evitamos slots en el pasado si es hoy
-                if not overlap and current_dt > now_salon:
+                if overlap_count < total_stylists and current_dt > now_salon:
                     available_slots.append(current_dt.strftime("%I:%M %p"))
 
             current_dt += timedelta(minutes=30)

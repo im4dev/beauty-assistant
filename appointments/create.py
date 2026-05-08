@@ -43,19 +43,35 @@ class AppointmentCreator:
         if not is_available:
             return False, msg, None
         
-        # 3. Asignar estilista (si no se especificó, usar uno por defecto)
+        # 3. Asignar estilista (si no se especificó, buscar uno libre)
         if not stylist_id:
-            # Buscar estilista activo del salón
-            stylist_res = await db.execute(
+            # Buscar TODOS los estilistas activos del salón
+            stylists_res = await db.execute(
                 select(Stylist).where(
                     Stylist.salon_id == salon_id,
                     Stylist.is_active == True
-                ).limit(1)
+                )
             )
-            stylist = stylist_res.scalars().first()
-            if not stylist:
-                return False, "No hay estilistas disponibles en este momento.", None
-            stylist_id = stylist.id
+            stylists = stylists_res.scalars().all()
+            
+            if not stylists:
+                return False, "No hay estilistas activos en este salón.", None
+            
+            # Buscar cuál de ellos está libre en este horario
+            for s in stylists:
+                overlap_query = select(Appointment).where(
+                    Appointment.stylist_id == s.id,
+                    Appointment.status == AppointmentStatus.SCHEDULED,
+                    Appointment.start_time < end_time,
+                    Appointment.end_time > start_time
+                )
+                overlap_res = await db.execute(overlap_query)
+                if not overlap_res.scalars().first():
+                    stylist_id = s.id
+                    break
+            
+            if not stylist_id:
+                return False, "Lo sentimos, todos nuestros estilistas están ocupados en ese horario.", None
         
         # 4. Crear la cita
         new_appointment = Appointment(
