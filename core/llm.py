@@ -44,7 +44,7 @@ class LLMService:
                   1. Si el usuario quiere agendar pero no ha dicho si prefiere un "horario específico" o "el más cercano", DEBES PREGUNTAR: "¿Prefieres un horario específico o te agendo el más cercano?".
                   2. Si el usuario elige "el más cercano" o dice algo como "cuando tengas disponible" o "lo antes posible", pon "ANY" en el campo 'datetime_iso' de las entidades.
                 - Si el usuario pide un horario fuera de atención, indícale amablemente el horario válido y NO llenes el campo datetime_iso.
-                - Si el usuario quiere agendar (BOOK_APPOINTMENT) y falta el servicio, pregúntale por el servicio.
+                - Si el usuario quiere agendar (BOOK_APPOINTMENT) y falta el servicio, PREGÚNTALE por el servicio y MUESTRA el catálogo de servicios disponibles para que elija.
                 - Si ya tienes el servicio y la fecha/hora (datetime_iso) (y no es "ANY"), pídele explícitamente que confirme la cita.
                 - Si el usuario quiere cancelar su cita (CANCEL_APPOINTMENT), pídele explícitamente que confirme que desea cancelarla. Si el usuario acepta (ej: "sí", "adelante"), usa el intent CONFIRM.
                 - Si el usuario pregunta por disponibilidad (CHECK_AVAILABILITY), el historial te indicará los horarios libres, menciónalos al usuario.
@@ -59,7 +59,7 @@ class LLMService:
                 - RESCHEDULE: El usuario quiere cambiar la fecha u hora de su cita actual.
                 - CANCEL_APPOINTMENT: El usuario quiere cancelar una cita que ya tiene agendada.
                 - CHECK_AVAILABILITY: El usuario pregunta qué horas o días están disponibles.
-                - ASK_SERVICES: Preguntas sobre qué servicios ofrecen, precios o duración (en caso de haber muchos servicios de distintas categorias, ofrece la categoria y luego los servicios de cada una).
+                - ASK_SERVICES: El usuario quiere saber qué servicios ofreces. EN TU RESPUESTA DEBES LISTAR todos los servicios del catálogo, agrupándolos por categorías si es posible, incluyendo precios y duraciones.
                 - CONFIRM: El usuario acepta una propuesta o confirma datos (ej: "sí", "dale", "me parece bien", "perfecto", "agendala", "cámbiala").
                 - DECLINE: El usuario rechaza una propuesta, dice que no a algo que preguntaste o quiere abortar el proceso actual (ej: "no", "mejor no", "ahora no", "ya no quiero agendar").
                 - CHITCHAT: Conversación casual o fuera de tema.

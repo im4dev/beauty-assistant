@@ -39,18 +39,31 @@ class Orchestrator:
 
         now = datetime.now(salon_tz)
 
-        # 2. FLUJO DE REGISTRO (Si no existe el cliente o estamos esperando el nombre)
-        if not client or session.current_step == "AWAITING_NAME":
-            if session.current_step != "AWAITING_NAME":
-                await self.session_manager.update_step(session, "AWAITING_NAME")
-                return "¡Hola! ✨ Bienvenido. No te tengo en mis registros, ¿cómo te llamas?"
+        # 2. FLUJO DE REGISTRO (Si no existe el cliente)
+        if not client:
+            # Usamos el LLM para ver si el usuario se está presentando
+            analysis = await self.llm.analyze_message(
+                message_text=message_text,
+                client_name="Nuevo Usuario",
+                current_entities={},
+                context_services="",
+                history="",
+                current_step="REGISTRATION",
+                salon_timezone=salon_tz_str
+            )
+            extracted_name = analysis.get("entities", {}).get("name")
             
-            # Guardamos el nombre y limpiamos estado
-            new_client = Client(wa_id=phone_number, salon_id=salon_id, name=message_text.strip())
-            self.db.add(new_client)
-            await self.db.commit()
-            await self.session_manager.update_step(session, "IDLE")
-            return f"¡Mucho gusto, {message_text}! Ya te registré. ¿En qué puedo ayudarte hoy?"
+            if extracted_name:
+                # Si la IA logró extraer un nombre propio
+                new_client = Client(wa_id=phone_number, salon_id=salon_id, name=extracted_name)
+                self.db.add(new_client)
+                await self.db.commit()
+                # Refrescamos para tener el objeto client disponible para el resto del flujo
+                client = new_client
+            else:
+                # Si no se pudo extraer un nombre, preguntamos amablemente
+                return "¡Hola! ✨ Bienvenido. No te tengo en mis registros, ¿cómo te llamas?"
+
 
         # --- NEW: SEARCH ACTIVE APPOINTMENT ---
         # Buscamos si existe una cita para este cliente que sea hoy o en el futuro
@@ -118,6 +131,15 @@ class Orchestrator:
             try:
                 from datetime import timedelta
                 
+                # 1. Calcular duración primero para usarla en ANY o en específico
+                duration = 30
+                if current_context.get("service") or entities.get("service"):
+                    srv_name = entities.get("service") or current_context.get("service")
+                    srv_res = await self.db.execute(select(Service).where(Service.name == srv_name, Service.salon_id == salon_id))
+                    srv_obj = srv_res.scalar_one_or_none()
+                    if srv_obj:
+                        duration = srv_obj.duration_minutes
+
                 # --- LÓGICA DE AGENDAMIENTO AUTOMÁTICO (ANY) ---
                 if dt_iso == "ANY":
                     # Buscamos desde "ahora" (o mañana si ya cerraron)
@@ -157,14 +179,6 @@ class Orchestrator:
                     if start_dt.tzinfo is None:
                         start_dt = start_dt.replace(tzinfo=salon_tz)
                     
-                    duration = 30
-                    if current_context.get("service") or entities.get("service"):
-                        srv_name = entities.get("service") or current_context.get("service")
-                        srv_res = await self.db.execute(select(Service).where(Service.name == srv_name, Service.salon_id == salon_id))
-                        srv_obj = srv_res.scalar_one_or_none()
-                        if srv_obj:
-                            duration = srv_obj.duration_minutes
-                    
                     if intent == "CHECK_AVAILABILITY":
                         slots = await AvailabilityService.get_available_slots(self.db, str(salon_id), start_dt.date(), duration)
                         history_text += f"\nSYSTEM: El usuario pregunta disponibilidad para {start_dt.date()}. Los horarios libres son: {', '.join(slots) if slots else 'Ninguno'}. Infórmale."
@@ -179,6 +193,7 @@ class Orchestrator:
                             history_text += f"\nSYSTEM: La hora solicitada ({start_dt.strftime('%H:%M')}) no es válida o ya está ocupada: {msg}. Los horarios libres para ese día son: {', '.join(slots) if slots else 'Ninguno'}. Pídele que elija uno de esos horarios."
                             entities["datetime_iso"] = None
                             needs_reanalysis = True
+
 
             except Exception as e:
                 print(f"Error parseando fecha para availability: {e}")
