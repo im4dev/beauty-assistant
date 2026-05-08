@@ -40,11 +40,15 @@ class LLMService:
 
                 REGLAS DEL NEGOCIO:
                 - Horario de atención: 9am a 5pm.
+                - FLUJO DE AGENDAMIENTO: 
+                  1. Si el usuario quiere agendar pero no ha dicho si prefiere un "horario específico" o "el más cercano", DEBES PREGUNTAR: "¿Prefieres un horario específico o te agendo el más cercano?".
+                  2. Si el usuario elige "el más cercano" o dice algo como "cuando tengas disponible" o "lo antes posible", pon "ANY" en el campo 'datetime_iso' de las entidades.
                 - Si el usuario pide un horario fuera de atención, indícale amablemente el horario válido y NO llenes el campo datetime_iso.
-                - Si el usuario quiere agendar (BOOK_APPOINTMENT) y falta el servicio o la fecha/hora, pregúntale por los datos faltantes en tu respuesta.
-                - Si ya tienes el servicio y la fecha/hora (datetime_iso), pídele explícitamente que confirme la cita.
+                - Si el usuario quiere agendar (BOOK_APPOINTMENT) y falta el servicio, pregúntale por el servicio.
+                - Si ya tienes el servicio y la fecha/hora (datetime_iso) (y no es "ANY"), pídele explícitamente que confirme la cita.
                 - Si el usuario quiere cancelar su cita (CANCEL_APPOINTMENT), pídele explícitamente que confirme que desea cancelarla. Si el usuario acepta (ej: "sí", "adelante"), usa el intent CONFIRM.
                 - Si el usuario pregunta por disponibilidad (CHECK_AVAILABILITY), el historial te indicará los horarios libres, menciónalos al usuario.
+
 
                 TAREA:
                 Analiza el mensaje del usuario y el historial. Tu respuesta debe guiar la conversación y generar el mensaje exacto que se le enviará al usuario.

@@ -117,32 +117,69 @@ class Orchestrator:
         if dt_iso:
             try:
                 from datetime import timedelta
-                start_dt = datetime.fromisoformat(dt_iso)
-                if start_dt.tzinfo is None:
-                    start_dt = start_dt.replace(tzinfo=salon_tz)
                 
-                duration = 30
-                if current_context.get("service") or entities.get("service"):
-                    srv_name = entities.get("service") or current_context.get("service")
-                    srv_res = await self.db.execute(select(Service).where(Service.name == srv_name, Service.salon_id == salon_id))
-                    srv_obj = srv_res.scalar_one_or_none()
-                    if srv_obj:
-                        duration = srv_obj.duration_minutes
-                
-                if intent == "CHECK_AVAILABILITY":
-                    slots = await AvailabilityService.get_available_slots(self.db, str(salon_id), start_dt.date(), duration)
-                    history_text += f"\nSYSTEM: El usuario pregunta disponibilidad para {start_dt.date()}. Los horarios libres son: {', '.join(slots) if slots else 'Ninguno'}. Infórmale."
-                    needs_reanalysis = True
-                else:
-                    # Validar disponibilidad real en BD si está agendando o reprogramando
-                    exclude_id = active_appointment.id if active_appointment else None
-                    is_ok, msg = await AvailabilityService.check_availability(self.db, str(salon_id), start_dt, duration, exclude_appointment_id=exclude_id)
+                # --- LÓGICA DE AGENDAMIENTO AUTOMÁTICO (ANY) ---
+                if dt_iso == "ANY":
+                    # Buscamos desde "ahora" (o mañana si ya cerraron)
+                    search_start = now
+                    if now.hour >= 17: # Si ya es tarde, buscar desde mañana a las 9am
+                        search_start = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0)
                     
-                    if not is_ok:
-                        slots = await AvailabilityService.get_available_slots(self.db, str(salon_id), start_dt.date(), duration)
-                        history_text += f"\nSYSTEM: La hora solicitada ({start_dt.strftime('%H:%M')}) no es válida o ya está ocupada: {msg}. Los horarios libres para ese día son: {', '.join(slots) if slots else 'Ninguno'}. Pídele que elija uno de esos horarios."
-                        entities["datetime_iso"] = None
+                    # Buscamos en los próximos 3 días
+                    found_slot = None
+                    for i in range(3):
+                        day_to_check = search_start + timedelta(days=i)
+                        slots = await AvailabilityService.get_available_slots(self.db, str(salon_id), day_to_check.date(), duration)
+                        if slots:
+                            # Tomar el primero disponible que sea después de search_start
+                            for s in slots:
+                                h, m = map(int, s.split(':'))
+                                slot_dt = day_to_check.replace(hour=h, minute=m, second=0, microsecond=0)
+                                if slot_dt > now:
+                                    found_slot = slot_dt
+                                    break
+                        if found_slot: break
+                    
+                    if found_slot:
+                        entities["datetime_iso"] = found_slot.isoformat()
+                        dt_iso = entities["datetime_iso"]
+                        # Forzamos un mensaje amigable sugiriendo este horario
+                        fecha_sug = found_slot.strftime('%d/%m a las %H:%M')
+                        history_text += f"\nSYSTEM: El usuario pidió el más cercano. Sugerimos {fecha_sug}. Pregúntale si le va bien ese horario."
                         needs_reanalysis = True
+                    else:
+                        history_text += f"\nSYSTEM: No hay huecos disponibles en los próximos 3 días. Infórmale al usuario."
+                        needs_reanalysis = True
+                
+                # --- LÓGICA NORMAL ---
+                else:
+                    start_dt = datetime.fromisoformat(dt_iso)
+                    if start_dt.tzinfo is None:
+                        start_dt = start_dt.replace(tzinfo=salon_tz)
+                    
+                    duration = 30
+                    if current_context.get("service") or entities.get("service"):
+                        srv_name = entities.get("service") or current_context.get("service")
+                        srv_res = await self.db.execute(select(Service).where(Service.name == srv_name, Service.salon_id == salon_id))
+                        srv_obj = srv_res.scalar_one_or_none()
+                        if srv_obj:
+                            duration = srv_obj.duration_minutes
+                    
+                    if intent == "CHECK_AVAILABILITY":
+                        slots = await AvailabilityService.get_available_slots(self.db, str(salon_id), start_dt.date(), duration)
+                        history_text += f"\nSYSTEM: El usuario pregunta disponibilidad para {start_dt.date()}. Los horarios libres son: {', '.join(slots) if slots else 'Ninguno'}. Infórmale."
+                        needs_reanalysis = True
+                    else:
+                        # Validar disponibilidad real en BD si está agendando o reprogramando
+                        exclude_id = active_appointment.id if active_appointment else None
+                        is_ok, msg = await AvailabilityService.check_availability(self.db, str(salon_id), start_dt, duration, exclude_appointment_id=exclude_id)
+                        
+                        if not is_ok:
+                            slots = await AvailabilityService.get_available_slots(self.db, str(salon_id), start_dt.date(), duration)
+                            history_text += f"\nSYSTEM: La hora solicitada ({start_dt.strftime('%H:%M')}) no es válida o ya está ocupada: {msg}. Los horarios libres para ese día son: {', '.join(slots) if slots else 'Ninguno'}. Pídele que elija uno de esos horarios."
+                            entities["datetime_iso"] = None
+                            needs_reanalysis = True
+
             except Exception as e:
                 print(f"Error parseando fecha para availability: {e}")
                 
