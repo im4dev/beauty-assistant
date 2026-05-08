@@ -30,7 +30,7 @@ class Orchestrator:
         result = await self.db.execute(
             select(Client).where(Client.wa_id == phone_number, Client.salon_id == salon_id)
         )
-        client = result.scalar_one_or_none()
+        client = result.scalars().first()
         
         salon_res = await self.db.execute(select(Salon).where(Salon.id == salon_id))
         salon = salon_res.scalar_one_or_none()
@@ -75,7 +75,7 @@ class Orchestrator:
                 Appointment.status == AppointmentStatus.SCHEDULED
             )
         )
-        active_appointment = appointment_res.scalar_one_or_none()
+        active_appointment = appointment_res.scalars().first()
         if active_appointment:
             print(f"DEBUG: Cita activa encontrada para {phone_number}: {active_appointment.id} ({active_appointment.start_time})")
         else:
@@ -136,7 +136,7 @@ class Orchestrator:
                 if current_context.get("service") or entities.get("service"):
                     srv_name = entities.get("service") or current_context.get("service")
                     srv_res = await self.db.execute(select(Service).where(Service.name == srv_name, Service.salon_id == salon_id))
-                    srv_obj = srv_res.scalar_one_or_none()
+                    srv_obj = srv_res.scalars().first()
                     if srv_obj:
                         duration = srv_obj.duration_minutes
 
@@ -151,13 +151,18 @@ class Orchestrator:
                     found_slot = None
                     for i in range(3):
                         day_to_check = search_start + timedelta(days=i)
-                        slots = await AvailabilityService.get_available_slots(self.db, str(salon_id), day_to_check.date(), duration)
+                        exclude_id = active_appointment.id if active_appointment else None; slots = await AvailabilityService.get_available_slots(self.db, str(salon_id), day_to_check.date(), duration, exclude_appointment_id=exclude_id)
                         if slots:
                             # Tomar el primero disponible que sea después de search_start
                             for s in slots:
-                                # Limpiar AM/PM si existe para poder convertir a número
-                                clean_s = s.replace(' AM', '').replace(' PM', '')
-                                h, m = map(int, clean_s.split(':'))
+                                # Parsing robusto de "HH:MM AM/PM"
+                                time_part, period = s.split(' ')
+                                h, m = map(int, time_part.split(':'))
+                                if period == 'PM' and h < 12:
+                                    h += 12
+                                elif period == 'AM' and h == 12:
+                                    h = 0
+                                
                                 slot_dt = day_to_check.replace(hour=h, minute=m, second=0, microsecond=0)
 
                                 if slot_dt > now:

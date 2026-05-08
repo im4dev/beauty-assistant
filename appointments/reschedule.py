@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from db.models import Appointment, AppointmentStatus, Service
+from db.models import Appointment, AppointmentStatus, Service, Salon
 from services.availability import AvailabilityService
 
 
@@ -36,7 +36,7 @@ class AppointmentRescheduler:
                     Service.salon_id == appointment.salon_id
                 )
             )
-            service = service_res.scalar_one_or_none()
+            service = service_res.scalars().first()
             if service:
                 duration = service.duration_minutes
         elif appointment.service_id:
@@ -65,5 +65,13 @@ class AppointmentRescheduler:
             appointment.service_name = service_name
         
         await db.commit()
+
+        import zoneinfo
+        salon_res = await db.execute(select(Salon).where(Salon.id == appointment.salon_id))
+        salon_obj = salon_res.scalars().first()
+        salon_tz = zoneinfo.ZoneInfo(salon_obj.timezone if salon_obj and salon_obj.timezone else 'UTC')
         
-        return True, f"Cita reprogramada de {old_time.strftime('%d/%m %H:%M')} a {new_start_time.strftime('%d/%m %H:%M')}."
+        old_local = old_time.astimezone(salon_tz)
+        new_local = new_start_time.astimezone(salon_tz)
+        
+        return True, f"Cita reprogramada de {old_local.strftime('%d/%m %H:%M')} a {new_local.strftime('%d/%m %H:%M')}."

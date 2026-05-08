@@ -61,12 +61,12 @@ class AvailabilityService:
         return True, "Disponible"
 
     @classmethod
-    async def get_available_slots(cls, db: AsyncSession, salon_id: str, target_date: date, duration_mins: int = 30):
+    async def get_available_slots(cls, db: AsyncSession, salon_id: str, target_date: date, duration_mins: int = 30, exclude_appointment_id=None):
         from db.models import Salon
         import zoneinfo
         
         salon_res = await db.execute(select(Salon).where(Salon.id == salon_id))
-        salon_obj = salon_res.scalar_one_or_none()
+        salon_obj = salon_res.scalars().first()
         salon_tz_str = salon_obj.timezone if salon_obj and salon_obj.timezone else "UTC"
         tz = zoneinfo.ZoneInfo(salon_tz_str)
         now_salon = datetime.now(tz)
@@ -87,6 +87,10 @@ class AvailabilityService:
             Appointment.start_time >= day_start,
             Appointment.start_time <= day_end
         )
+        
+        if exclude_appointment_id:
+            query = query.where(Appointment.id != exclude_appointment_id)
+            
         res = await db.execute(query)
         appointments = res.scalars().all()
 

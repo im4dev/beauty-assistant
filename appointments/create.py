@@ -27,7 +27,7 @@ class AppointmentCreator:
         service_res = await db.execute(
             select(Service).where(Service.name == service_name, Service.salon_id == salon_id)
         )
-        service = service_res.scalar_one_or_none()
+        service = service_res.scalars().first()
         
         if not service:
             return False, f"Servicio '{service_name}' no encontrado.", None
@@ -52,7 +52,7 @@ class AppointmentCreator:
                     Stylist.is_active == True
                 ).limit(1)
             )
-            stylist = stylist_res.scalar_one_or_none()
+            stylist = stylist_res.scalars().first()
             if not stylist:
                 return False, "No hay estilistas disponibles en este momento.", None
             stylist_id = stylist.id

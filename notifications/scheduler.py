@@ -33,7 +33,7 @@ class ReminderScheduler:
         Se ejecuta periódicamente (recomendado: cada 5-10 minutos)
         """
         async with self.db_session_factory() as db:
-            now = datetime.utcnow()
+            from datetime import timezone; now = datetime.now(timezone.utc)
             
             # 1. Recordatorios de 24 horas
             await self._send_24h_reminders(db, now)
