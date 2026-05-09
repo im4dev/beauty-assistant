@@ -301,14 +301,29 @@ class Orchestrator:
                         if start_dt.tzinfo is None:
                             start_dt = start_dt.replace(tzinfo=salon_tz)
                         
-                        # AGENDAR DESDE LISTA DE ESPERA
-                        success, msg, new_appointment = await AppointmentCreator.create_appointment(
-                            self.db,
-                            salon_id=salon_id,
-                            client_id=str(client.id),
-                            service_name=service_name,
-                            start_time=start_dt
-                        )
+                        # AGENDAR DESDE LISTA DE ESPERA O ADELANTAR CITA
+                        move_up_id = current_context.get("move_up_appointment_id")
+                        if move_up_id:
+                            # Es un ADELANTO de una cita existente
+                            appt_res = await self.db.execute(select(Appointment).where(Appointment.id == move_up_id))
+                            old_appt = appt_res.scalars().first()
+                            if old_appt:
+                                success, msg = await AppointmentRescheduler.reschedule_appointment(
+                                    self.db, old_appt, start_dt, service_name
+                                )
+                                new_appointment = old_appt
+                            else:
+                                success, msg = False, "No se encontró la cita original para adelantar."
+                        else:
+                            # Es una NUEVA CITA desde lista de espera
+                            success, msg, new_appointment = await AppointmentCreator.create_appointment(
+                                self.db,
+                                salon_id=salon_id,
+                                client_id=str(client.id),
+                                service_name=service_name,
+                                start_time=start_dt,
+                                is_flexible=True
+                            )
                         
                         if success:
                             # Marcar waitlist como completado (o simplemente resetear)
@@ -396,7 +411,8 @@ class Orchestrator:
                                 salon_id=salon_id,
                                 client_id=str(client.id),
                                 service_name=service_name,
-                                start_time=start_dt
+                                start_time=start_dt,
+                                is_flexible=(current_context.get("datetime_iso") == "ANY")
                             )
                             if success:
                                 current_context = {}

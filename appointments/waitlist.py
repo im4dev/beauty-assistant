@@ -6,6 +6,7 @@ from db.models import (
     Appointment, AppointmentStatus, Client, Stylist, Service, Salon, SessionState
 )
 from appointments.create import AppointmentCreator
+from core.session import SessionManager
 from notifications.sender import NotificationSender
 import json
 import zoneinfo
@@ -74,7 +75,63 @@ class WaitlistManager:
             if stylist:
                 stylist_name = stylist.name
 
-        # 1. Buscar lista de espera FLEXIBLE, ordenada inversamente por created_at (LIFO)
+        # --- NUEVA LÓGICA: Buscar candidatos para ADELANTAR CITA ---
+        # Buscamos citas agendadas para el mismo día, mismo estilista, que sean 'is_flexible' y empiecen DESPUÉS del hueco liberado
+        from datetime import time
+        day_start = datetime.combine(freed_start_time.date(), time.min).replace(tzinfo=freed_start_time.tzinfo)
+        day_end = datetime.combine(freed_start_time.date(), time.max).replace(tzinfo=freed_start_time.tzinfo)
+
+        move_up_query = select(Appointment).where(
+            Appointment.salon_id == salon_id,
+            Appointment.stylist_id == stylist_id,
+            Appointment.status == AppointmentStatus.SCHEDULED,
+            Appointment.is_flexible == True,
+            Appointment.start_time > freed_start_time,
+            Appointment.start_time <= day_end
+        ).order_by(Appointment.start_time.asc())
+
+        move_up_res = await self.db.execute(move_up_query)
+        move_up_candidates = move_up_res.scalars().all()
+
+        notification_sender = NotificationSender()
+
+        for appt in move_up_candidates:
+            # Notificar al cliente si tiene sesión activa o podemos crearla
+            client_res = await self.db.execute(select(Client).where(Client.id == appt.client_id))
+            client = client_res.scalar_one_or_none()
+            if not client: continue
+
+            session_manager = SessionManager(self.db)
+            session = await session_manager.get_or_create(client.wa_id, salon_id)
+            
+            # Formatear hora de su cita actual
+            current_time = appt.start_time.astimezone(tz).strftime("%H:%M")
+            
+            # Enviar notificación de adelanto
+            message = (
+                f"¡Hola {client.name}! 👋 Se liberó un espacio más temprano hoy con {stylist_name or 'tu estilista'} "
+                f"a las {formatted_time.split(' a las ')[1]}.\n\n"
+                f"Actualmente tienes cita a las {current_time}. ¿Te gustaría adelantarla para las {formatted_time.split(' a las ')[1]}?\n\n"
+                f"Responde *sí* para moverla o ignora este mensaje si prefieres tu horario actual."
+            )
+            
+            success = await notification_sender.send_to_client(client.wa_id, message)
+            
+            if success:
+                session.current_step = "CONFIRMING_WAITLIST"
+                session.context_data = json.dumps({
+                    "offered_slot": freed_start_time.isoformat(),
+                    "service": appt.service_name,
+                    "stylist_id": str(stylist_id),
+                    "move_up_appointment_id": str(appt.id),
+                    "is_move_up": True
+                })
+                await self.db.commit()
+                print(f"DEBUG: Oferta de ADELANTO enviada a {client.wa_id}")
+                # Por ahora, solo ofrecemos al primero disponible para no saturar
+                return client
+
+        # 1. Si no hubo adelantos, buscar lista de espera FLEXIBLE
         result = await self.db.execute(
             select(Waitlist)
             .where(

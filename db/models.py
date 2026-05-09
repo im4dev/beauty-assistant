@@ -63,6 +63,7 @@ class Appointment(Base):
     start_time = Column(DateTime(timezone=True), nullable=False)
     end_time = Column(DateTime(timezone=True), nullable=False)
     status = Column(SQLEnum(AppointmentStatus), default=AppointmentStatus.SCHEDULED)
+    is_flexible = Column(Boolean, default=False) # True si se agendó con "ANY" o lista de espera
     service_name = Column(String(255)) # Ej: "Corte de cabello"
     
     # Recordatorios

@@ -17,7 +17,8 @@ class AppointmentCreator:
         client_id: str,
         service_name: str,
         start_time: datetime,
-        stylist_id: str = None
+        stylist_id: str = None,
+        is_flexible: bool = False
     ) -> tuple[bool, str, Appointment | None]:
         """
         Crea una nueva cita validando disponibilidad.
@@ -84,7 +85,8 @@ class AppointmentCreator:
             service_name=service_name,
             start_time=start_time,
             end_time=end_time,
-            status=AppointmentStatus.SCHEDULED
+            status=AppointmentStatus.SCHEDULED,
+            is_flexible=is_flexible
         )
         
         db.add(new_appointment)
