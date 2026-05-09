@@ -11,12 +11,14 @@ import zoneinfo
 class AppointmentRescheduler:
     """Lógica para reagendar citas existentes"""
     
-    @staticmethod
+    @classmethod
     async def reschedule_appointment(
+        cls,
         db: AsyncSession,
         appointment: Appointment,
         new_start_time: datetime,
-        service_name: str = None
+        service_name: str = None,
+        is_flexible: bool = None
     ) -> tuple[bool, str]:
         """
         Reagenda una cita existente a un nuevo horario.
@@ -26,6 +28,7 @@ class AppointmentRescheduler:
             appointment: Objeto Appointment existente
             new_start_time: Nueva fecha/hora de inicio
             service_name: Nuevo nombre de servicio (opcional)
+            is_flexible: Flag de flexibilidad (opcional)
         
         Returns:
             (success, message)
@@ -66,6 +69,9 @@ class AppointmentRescheduler:
         
         if service_name:
             appointment.service_name = service_name
+            
+        if is_flexible is not None:
+            appointment.is_flexible = is_flexible
         
         await db.commit()
 

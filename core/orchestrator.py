@@ -247,16 +247,22 @@ class Orchestrator:
             current_context["service"] = entities["service"]
         
         if entities.get("datetime_iso"):
-            # Si la IA envía "ANY" pero ya tenemos una fecha real en el contexto, NO la sobreescribimos
             if entities["datetime_iso"] == "ANY" and current_context.get("datetime_iso") and current_context["datetime_iso"] != "ANY":
                 pass 
             else:
                 current_context["datetime_iso"] = entities["datetime_iso"]
+                # Si es ANY, marcamos la sesión como flexible
+                if entities["datetime_iso"] == "ANY":
+                    current_context["is_flexible"] = True
 
 
         # Si es RESCHEDULE y no tenemos servicio en el contexto, lo tomamos de la cita activa
         if intent == "RESCHEDULE" and not current_context.get("service") and active_appointment:
             current_context["service"] = active_appointment.service_name
+
+        # Si el intent es RESCHEDULE, apagamos la flexibilidad automática (fue un cambio manual)
+        if intent == "RESCHEDULE":
+            current_context["is_flexible"] = False
 
         # Si el intent es BOOK_APPOINTMENT o RESCHEDULE y ya tenemos ambas cosas, pasamos a CONFIRMING
         if intent in ["BOOK_APPOINTMENT", "RESCHEDULE"] and current_context.get("service") and current_context.get("datetime_iso"):
@@ -321,7 +327,7 @@ class Orchestrator:
                             old_appt = appt_res.scalars().first()
                             if old_appt:
                                 success, msg = await AppointmentRescheduler.reschedule_appointment(
-                                    self.db, old_appt, start_dt, service_name
+                                    self.db, old_appt, start_dt, service_name, is_flexible=False
                                 )
                                 new_appointment = old_appt
                             else:
@@ -402,7 +408,8 @@ class Orchestrator:
                         if active_appointment:
                             # REPROGRAMAR CITA EXISTENTE (Solo una a la vez)
                             success, msg = await AppointmentRescheduler.reschedule_appointment(
-                                self.db, active_appointment, start_dt, service_name
+                                self.db, active_appointment, start_dt, service_name, 
+                                is_flexible=current_context.get("is_flexible", False)
                             )
                             if success:
                                 current_context = {}
@@ -425,7 +432,7 @@ class Orchestrator:
                                 client_id=str(client.id),
                                 service_name=service_name,
                                 start_time=start_dt,
-                                is_flexible=(current_context.get("datetime_iso") == "ANY")
+                                is_flexible=current_context.get("is_flexible", False)
                             )
                             if success:
                                 current_context = {}
