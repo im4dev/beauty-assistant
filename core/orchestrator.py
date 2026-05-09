@@ -254,6 +254,10 @@ class Orchestrator:
                 current_context["datetime_iso"] = entities["datetime_iso"]
 
 
+        # Si es RESCHEDULE y no tenemos servicio en el contexto, lo tomamos de la cita activa
+        if intent == "RESCHEDULE" and not current_context.get("service") and active_appointment:
+            current_context["service"] = active_appointment.service_name
+
         # Si el intent es BOOK_APPOINTMENT o RESCHEDULE y ya tenemos ambas cosas, pasamos a CONFIRMING
         if intent in ["BOOK_APPOINTMENT", "RESCHEDULE"] and current_context.get("service") and current_context.get("datetime_iso"):
             await self.session_manager.update_step(session, "CONFIRMING_APPOINTMENT")
