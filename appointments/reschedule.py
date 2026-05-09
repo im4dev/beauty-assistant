@@ -4,6 +4,7 @@ from sqlalchemy import select
 from db.models import Appointment, AppointmentStatus, Service, Salon, Stylist, Client
 from services.availability import AvailabilityService
 from notifications.sender import NotificationSender
+from appointments.waitlist import WaitlistManager
 import zoneinfo
 
 
@@ -95,4 +96,19 @@ class AppointmentRescheduler:
         except Exception as e:
             print(f"❌ Error notificando al estilista en reprogramación: {e}")
         
+        # 2. Iniciar cascada para llenar el hueco que acabamos de liberar (old_time)
+        try:
+            waitlist_manager = WaitlistManager(db)
+            # El hueco liberado es old_time, con la duración original (que asumimos es la misma)
+            duration = (appointment.end_time - appointment.start_time).total_seconds() / 60
+            await waitlist_manager.process_cascade(
+                salon_id=appointment.salon_id,
+                freed_start_time=old_time,
+                freed_duration=int(duration),
+                service_name=appointment.service_name,
+                stylist_id=appointment.stylist_id
+            )
+        except Exception as e:
+            print(f"Error en cascada tras reprogramación: {e}")
+
         return True, f"Cita reprogramada de {old_local.strftime('%d/%m %H:%M')} a {new_local.strftime('%d/%m %H:%M')}."
