@@ -52,8 +52,8 @@ class AvailabilityService:
         if total_stylists == 0:
             return False, "No hay estilistas activos en este salón."
 
-        # 2. Contar citas superpuestas
-        query = select(func.count(Appointment.id)).where(
+        # 2. Calcular ocupación máxima simultánea en el rango
+        query = select(Appointment).where(
             Appointment.salon_id == salon_id,
             Appointment.status == AppointmentStatus.SCHEDULED,
             Appointment.start_time < end_time,
@@ -62,10 +62,24 @@ class AvailabilityService:
         if exclude_appointment_id:
             query = query.where(Appointment.id != exclude_appointment_id)
             
-        overlap_res = await db.execute(query)
-        overlap_count = overlap_res.scalar() or 0
+        res = await db.execute(query)
+        overlapping_appts = res.scalars().all()
 
-        if overlap_count >= total_stylists:
+        # Para servicios largos, verificamos el pico de concurrencia
+        # Probamos cada 15 minutos dentro del rango solicitado
+        check_time = requested_time
+        max_concurrent = 0
+        
+        while check_time < end_time:
+            current_concurrent = 0
+            for appt in overlapping_appts:
+                if appt.start_time <= check_time < appt.end_time:
+                    current_concurrent += 1
+            
+            max_concurrent = max(max_concurrent, current_concurrent)
+            check_time += timedelta(minutes=15)
+
+        if max_concurrent >= total_stylists:
             return False, "Lo sentimos, no hay estilistas disponibles en este horario."
             
         return True, "Disponible"
@@ -113,16 +127,19 @@ class AvailabilityService:
             if is_ok:
                 slot_end = current_dt + timedelta(minutes=duration_mins)
                 
-                # Check overlap against appointments
-                overlap_count = 0
-                for appt in appointments:
-                    appt_start = appt.start_time
-                    appt_end = appt.end_time
-                    if appt_start < slot_end and appt_end > current_dt:
-                        overlap_count += 1
+                # Check peak occupancy within the slot
+                slot_check_time = current_dt
+                max_concurrent = 0
+                while slot_check_time < slot_end:
+                    current_concurrent = 0
+                    for appt in appointments:
+                        if appt.start_time <= slot_check_time < appt.end_time:
+                            current_concurrent += 1
+                    max_concurrent = max(max_concurrent, current_concurrent)
+                    slot_check_time += timedelta(minutes=15)
                         
                 # Evitamos slots en el pasado si es hoy
-                if overlap_count < total_stylists and current_dt > now_salon:
+                if max_concurrent < total_stylists and current_dt > now_salon:
                     available_slots.append(current_dt.strftime("%I:%M %p"))
 
             current_dt += timedelta(minutes=30)
