@@ -350,7 +350,8 @@ class Orchestrator:
                     except Exception as e:
                         print(f"❌ Error al agendar desde waitlist: {e}")
                         response_message = "Hubo un problema técnico al confirmar tu cita de lista de espera."
-            if session.current_step == "CONFIRMING_CANCELLATION":
+            
+            elif session.current_step == "CONFIRMING_CANCELLATION":
                 if active_appointment:
                     try:
                         print(f"DEBUG: Cancelando cita ID: {active_appointment.id}")
@@ -376,7 +377,7 @@ class Orchestrator:
                 else:
                     print(f"DEBUG: No se encontró cita activa para cancelar en step CONFIRMING_CANCELLATION.")
             
-            elif session.current_step == "CONFIRMING_APPOINTMENT":
+            elif session.current_step in ["IDLE", "CONFIRMING_APPOINTMENT"]:
                 service_name = current_context.get("service")
                 dt_iso = current_context.get("datetime_iso")
                 
