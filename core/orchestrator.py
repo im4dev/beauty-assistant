@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from core.session import SessionManager
 from core.llm import LLMService
 from datetime import datetime, timedelta
@@ -7,10 +7,11 @@ from services.availability import AvailabilityService
 from appointments.create import AppointmentCreator
 from appointments.reschedule import AppointmentRescheduler
 from appointments.cancel import AppointmentCanceller
+from appointments.waitlist import WaitlistManager
 from notifications.sender import NotificationSender
 import json
 
-from db.models import Appointment, AppointmentStatus, Client, Service, Stylist, Salon
+from db.models import Appointment, AppointmentStatus, Client, Service, Stylist, Salon, Waitlist, WaitlistRequestType, WaitlistStatus
 import zoneinfo
 
 class Orchestrator:
@@ -89,7 +90,18 @@ class Orchestrator:
         # Preparamos catálogo y historial para el LLM
         res = await self.db.execute(select(Service).where(Service.salon_id == salon_id, Service.is_active == True))
         db_services = res.scalars().all()
-        catalogo_str = "\n".join([f"- {s.name}: ${s.price} ({s.duration_minutes} min)" for s in db_services])
+        
+        # Agrupamos por categoría
+        services_by_cat = {}
+        for s in db_services:
+            cat = s.category or "Otros"
+            if cat not in services_by_cat:
+                services_by_cat[cat] = []
+            services_by_cat[cat].append(f"{s.name} ({s.duration_minutes} min): ${s.price}")
+        
+        catalogo_str = ""
+        for cat, items in services_by_cat.items():
+            catalogo_str += f"\n{cat}:\n" + "\n".join([f"- {i}" for i in items]) + "\n"
         
         history_list = current_context.get("last_messages", [])
         history_list.append({"role": "user", "content": message_text})
@@ -178,7 +190,16 @@ class Orchestrator:
                         history_text += f"\nSYSTEM: El usuario pidió el más cercano. Sugerimos {fecha_sug}. Pregúntale si le va bien ese horario."
                         needs_reanalysis = True
                     else:
-                        history_text += f"\nSYSTEM: No hay huecos disponibles en los próximos 3 días. Infórmale al usuario."
+                        history_text += f"\nSYSTEM: No hay huecos disponibles en los próximos 3 días. Infórmale al usuario y dile que lo pondrás en lista de espera si lo desea."
+                        # Agregamos a lista de espera automáticamente si pidió ANY
+                        waitlist_manager = WaitlistManager(self.db)
+                        srv_id = srv_obj.id if 'srv_obj' in locals() and srv_obj else None
+                        await waitlist_manager.add_to_waitlist(
+                            salon_id=salon_id,
+                            client_id=str(client.id),
+                            request_type=WaitlistRequestType.FLEXIBLE,
+                            preferred_service_id=srv_id
+                        )
                         needs_reanalysis = True
                 
                 # --- LÓGICA NORMAL ---
@@ -244,6 +265,19 @@ class Orchestrator:
         # 7. Ejecutar acción de CONFIRM o DECLINE si aplica
         if intent == "DECLINE":
             print(f"DEBUG: Intent DECLINE detectado. Reseteando sesión a IDLE.")
+            if session.current_step == "CONFIRMING_WAITLIST":
+                # Marcar en lista de espera como rechazado
+                try:
+                    waitlist_id = current_context.get("waitlist_id")
+                    if waitlist_id:
+                        await self.db.execute(
+                            update(Waitlist)
+                            .where(Waitlist.id == waitlist_id)
+                            .values(status=WaitlistStatus.REJECTED, rejection_count=Waitlist.rejection_count + 1)
+                        )
+                except Exception as e:
+                    print(f"Error actualizando waitlist en DECLINE: {e}")
+            
             await self.session_manager.update_step(session, "IDLE")
             current_context["service"] = None
             current_context["datetime_iso"] = None
@@ -251,6 +285,52 @@ class Orchestrator:
         # Si el intent es CONFIRM (o CANCEL_APPOINTMENT pero ya estábamos confirmando)
         if intent == "CONFIRM" or (intent == "CANCEL_APPOINTMENT" and session.current_step == "CONFIRMING_CANCELLATION"):
             print(f"DEBUG: Ejecutando confirmación. Intent: {intent}, Step actual: {session.current_step}")
+            
+            if session.current_step == "CONFIRMING_WAITLIST":
+                offered_slot = current_context.get("offered_slot")
+                service_name = current_context.get("service")
+                waitlist_id = current_context.get("waitlist_id")
+                
+                if offered_slot and service_name:
+                    try:
+                        start_dt = datetime.fromisoformat(offered_slot)
+                        if start_dt.tzinfo is None:
+                            start_dt = start_dt.replace(tzinfo=salon_tz)
+                        
+                        # AGENDAR DESDE LISTA DE ESPERA
+                        success, msg, new_appointment = await AppointmentCreator.create_appointment(
+                            self.db,
+                            salon_id=salon_id,
+                            client_id=str(client.id),
+                            service_name=service_name,
+                            start_time=start_dt
+                        )
+                        
+                        if success:
+                            # Marcar waitlist como completado (o simplemente resetear)
+                            if waitlist_id:
+                                await self.db.execute(
+                                    update(Waitlist)
+                                    .where(Waitlist.id == waitlist_id)
+                                    .values(status=WaitlistStatus.WAITING) # O COMPLETED si existiera
+                                )
+                            
+                            current_context = {}
+                            await self.session_manager.update_step(session, "IDLE", context=current_context)
+                            response_message = f"✅ ¡Excelente! Tu cita ha sido agendada para el {start_dt.astimezone(salon_tz).strftime('%d/%m a las %H:%M')}. Nos vemos pronto."
+                            
+                            # Enviar notificación de confirmación
+                            await self.notification_sender.notify_appointment_confirmed(
+                                phone_number,
+                                service_name,
+                                start_dt.astimezone(salon_tz).strftime('%d/%m a las %H:%M')
+                            )
+                        else:
+                            response_message = f"Lo siento, parece que ese horario ya no está disponible: {msg}"
+                            await self.session_manager.update_step(session, "IDLE")
+                    except Exception as e:
+                        print(f"❌ Error al agendar desde waitlist: {e}")
+                        response_message = "Hubo un problema técnico al confirmar tu cita de lista de espera."
             if session.current_step == "CONFIRMING_CANCELLATION":
                 if active_appointment:
                     try:

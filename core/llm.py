@@ -59,7 +59,9 @@ class LLMService:
                 - RESCHEDULE: El usuario quiere cambiar la fecha u hora de su cita actual.
                 - CANCEL_APPOINTMENT: El usuario quiere cancelar una cita que ya tiene agendada.
                 - CHECK_AVAILABILITY: El usuario pregunta qué horas o días están disponibles.
-                - ASK_SERVICES: El usuario quiere saber qué servicios ofreces. EN TU RESPUESTA DEBES LISTAR todos los servicios del catálogo, agrupándolos por categorías si es posible, incluyendo precios y duraciones.
+                - ASK_SERVICES: El usuario quiere saber qué servicios ofreces. EN TU RESPUESTA DEBES LISTAR todos los servicios del catálogo siguiendo ESTE FORMATO EXACTO (usa negritas para las categorías para crear contraste):
+                  *Nombre de Categoría*:
+                  - Nombre del servicio (duración): $Precio
                 - CONFIRM: El usuario acepta una propuesta o confirma datos (ej: "sí", "dale", "me parece bien", "perfecto", "agendala", "cámbiala").
                 - DECLINE: El usuario rechaza una propuesta, dice que no a algo que preguntaste o quiere abortar el proceso actual (ej: "no", "mejor no", "ahora no", "ya no quiero agendar").
                 - CHITCHAT: Conversación casual o fuera de tema.

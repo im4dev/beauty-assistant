@@ -3,9 +3,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from db.models import (
     Waitlist, WaitlistRequestType, WaitlistStatus,
-    Appointment, AppointmentStatus, Client, Stylist, Service
+    Appointment, AppointmentStatus, Client, Stylist, Service, Salon, SessionState
 )
 from appointments.create import AppointmentCreator
+from notifications.sender import NotificationSender
+import json
+import zoneinfo
 
 
 class WaitlistManager:
@@ -52,19 +55,26 @@ class WaitlistManager:
     ) -> Client | None:
         """
         Ejecuta cascada inversa de lista de espera.
-        
-        Proceso:
-        1. Buscar lista de espera FLEXIBLE (último → primero)
-        2. Ofrecer horario al último flexible
-        3. Esperar 5 min (timeout) - implementado con status 'offered'
-        4. Si acepta → agendar, fin
-        5. Si rechaza → siguiente cliente
-        6. Si nadie → retornar None
-        
-        Returns:
-            Client que fue agendado, o None si nadie aceptó
         """
-        # 1. Buscar lista de espera FLEXIBLE, ordenada inversamente por created_at
+        # 0. Obtener datos del salón para el timezone
+        salon_res = await self.db.execute(select(Salon).where(Salon.id == salon_id))
+        salon = salon_res.scalar_one_or_none()
+        tz_str = salon.timezone if salon and salon.timezone else "UTC"
+        tz = zoneinfo.ZoneInfo(tz_str)
+        
+        # Formatear la fecha para el mensaje
+        local_time = freed_start_time.astimezone(tz)
+        formatted_time = local_time.strftime("%d/%m a las %H:%M")
+
+        # Obtener nombre del estilista
+        stylist_name = None
+        if stylist_id:
+            stylist_res = await self.db.execute(select(Stylist).where(Stylist.id == stylist_id))
+            stylist = stylist_res.scalar_one_or_none()
+            if stylist:
+                stylist_name = stylist.name
+
+        # 1. Buscar lista de espera FLEXIBLE, ordenada inversamente por created_at (LIFO)
         result = await self.db.execute(
             select(Waitlist)
             .where(
@@ -76,11 +86,13 @@ class WaitlistManager:
         )
         waitlist_entries = result.scalars().all()
         
+        notification_sender = NotificationSender()
+        
         for entry in waitlist_entries:
-            # 2. Marcar como 'offered' para evitar que otros procesos lo agarren
+            # 2. Marcar como 'offered'
             entry.status = WaitlistStatus.OFFERED
+            entry.is_notified = True
             entry.updated_at = datetime.utcnow()
-            await self.db.commit()
             
             # 3. Obtener datos del cliente
             client_res = await self.db.execute(
@@ -91,16 +103,35 @@ class WaitlistManager:
             if not client:
                 continue
             
-            # 4. Aquí se debería enviar mensaje por WhatsApp al cliente
-            # "¿Disponible para [servicio] a las [hora] con [estilista]?"
-            # El cliente responde y se procesa la respuesta
+            # 4. Actualizar el estado de la sesión del cliente
+            # Esto permitirá que el Orchestrator sepa qué está confirmando el cliente
+            session_res = await self.db.execute(
+                select(SessionState).where(SessionState.wa_id == client.wa_id)
+            )
+            session = session_res.scalar_one_or_none()
             
-            # Por ahora, simulamos que el cliente NO responde
-            # En producción, esto debería ser manejado por un endpoint webhook
-            # que procese la respuesta del cliente
+            if not session:
+                session = SessionState(wa_id=client.wa_id, salon_id=salon_id)
+                self.db.add(session)
             
-            # Simulación: si nadie responde en 5 min, pasamos al siguiente
-            await self._handle_no_response(entry)
+            session.current_step = "CONFIRMING_WAITLIST"
+            session.context_data = json.dumps({
+                "offered_slot": freed_start_time.isoformat(),
+                "service": service_name,
+                "stylist_id": stylist_id,
+                "waitlist_id": str(entry.id)
+            })
+            
+            await self.db.commit()
+            
+            # 5. Enviar mensaje por WhatsApp
+            print(f"DEBUG: Enviando oferta de lista de espera a {client.wa_id}")
+            await notification_sender.notify_waitlist_offer(
+                phone_number=client.wa_id,
+                service_name=service_name or "tu servicio",
+                date_time=formatted_time,
+                stylist_name=stylist_name
+            )
             
         return None
     
