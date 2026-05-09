@@ -395,7 +395,7 @@ class Orchestrator:
                 else:
                     print(f"DEBUG: No se encontró cita activa para cancelar en step CONFIRMING_CANCELLATION.")
             
-            elif session.current_step in ["IDLE", "CONFIRMING_APPOINTMENT"]:
+            elif session.current_step in ["IDLE", "START", "CONFIRMING_APPOINTMENT"]:
                 service_name = current_context.get("service")
                 dt_iso = current_context.get("datetime_iso")
                 
@@ -406,11 +406,12 @@ class Orchestrator:
                             start_dt = start_dt.replace(tzinfo=salon_tz)
                         
                         if active_appointment:
-                            # REPROGRAMAR CITA EXISTENTE (Solo una a la vez)
+                            print(f"DEBUG: Intentando reprogramar cita {active_appointment.id} a {start_dt}")
                             success, msg = await AppointmentRescheduler.reschedule_appointment(
                                 self.db, active_appointment, start_dt, service_name, 
                                 is_flexible=current_context.get("is_flexible", False)
                             )
+                            print(f"DEBUG: Resultado reprogramación: success={success}, msg={msg}")
                             if success:
                                 current_context = {}
                                 await self.session_manager.update_step(session, "IDLE", context=current_context)
@@ -426,6 +427,7 @@ class Orchestrator:
                                 response_message = msg
                         else:
                             # AGENDAR NUEVA CITA
+                            print(f"DEBUG: Intentando crear nueva cita para {service_name} a las {start_dt}")
                             success, msg, new_appointment = await AppointmentCreator.create_appointment(
                                 self.db,
                                 salon_id=salon_id,
@@ -434,6 +436,7 @@ class Orchestrator:
                                 start_time=start_dt,
                                 is_flexible=current_context.get("is_flexible", False)
                             )
+                            print(f"DEBUG: Resultado creación: success={success}, msg={msg}")
                             if success:
                                 current_context = {}
                                 await self.session_manager.update_step(session, "IDLE", context=current_context)
