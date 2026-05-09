@@ -104,13 +104,16 @@ class AppointmentCreator:
                 local_time = start_time.astimezone(tz)
                 formatted_time = local_time.strftime("%d/%m a las %H:%M")
                 
+                print(f"DEBUG: Enviando notificación de nueva cita al estilista {stylist_obj.name} ({stylist_obj.phone_number})")
                 await notification_sender.notify_stylist_new_appointment(
                     phone_number=stylist_obj.phone_number,
                     client_name=client_obj.name or "Cliente",
                     service_name=service_name,
                     date_time=formatted_time
                 )
+            else:
+                print(f"DEBUG: No se notificó al estilista en creación. Objeto encontrado: {bool(stylist_obj)}, Teléfono: {stylist_obj.phone_number if stylist_obj else 'N/A'}")
         except Exception as e:
-            print(f"Error notificando al estilista: {e}")
+            print(f"❌ Error notificando al estilista en creación: {e}")
         
         return True, "Cita creada exitosamente.", new_appointment

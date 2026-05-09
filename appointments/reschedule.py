@@ -83,13 +83,16 @@ class AppointmentRescheduler:
             client_obj = await db.get(Client, appointment.client_id)
             
             if stylist_obj and stylist_obj.phone_number:
+                print(f"DEBUG: Enviando notificación de reprogramación al estilista {stylist_obj.name} ({stylist_obj.phone_number})")
                 await notification_sender.notify_stylist_appointment_rescheduled(
                     phone_number=stylist_obj.phone_number,
                     client_name=client_obj.name or "Cliente",
                     old_date_time=old_local.strftime("%d/%m a las %H:%M"),
                     new_date_time=new_local.strftime("%d/%m a las %H:%M")
                 )
+            else:
+                print(f"DEBUG: No se notificó al estilista en reprogramación. Objeto encontrado: {bool(stylist_obj)}, Teléfono: {stylist_obj.phone_number if stylist_obj else 'N/A'}")
         except Exception as e:
-            print(f"Error notificando al estilista en reprogramación: {e}")
+            print(f"❌ Error notificando al estilista en reprogramación: {e}")
         
         return True, f"Cita reprogramada de {old_local.strftime('%d/%m %H:%M')} a {new_local.strftime('%d/%m %H:%M')}."

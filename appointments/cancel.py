@@ -48,13 +48,16 @@ class AppointmentCanceller:
                 local_time = appointment.start_time.astimezone(tz)
                 formatted_time = local_time.strftime("%d/%m a las %H:%M")
                 
+                print(f"DEBUG: Enviando notificación de cancelación al estilista {stylist_obj.name} ({stylist_obj.phone_number})")
                 await notification_sender.notify_stylist_appointment_cancelled(
                     phone_number=stylist_obj.phone_number,
                     client_name=client_obj.name or "Cliente",
                     date_time=formatted_time
                 )
+            else:
+                print(f"DEBUG: No se notificó al estilista. Objeto encontrado: {bool(stylist_obj)}, Teléfono: {stylist_obj.phone_number if stylist_obj else 'N/A'}")
         except Exception as e:
-            print(f"Error notificando al estilista en cancelación: {e}")
+            print(f"❌ Error notificando al estilista en cancelación: {e}")
         
         # 2. Iniciar cascada de lista de espera si se solicita
         if trigger_waitlist:
