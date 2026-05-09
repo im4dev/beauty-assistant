@@ -19,9 +19,7 @@ class NotificationSender:
             True si se envió exitosamente, False en caso contrario
         """
         try:
-            # HARDCODE para pruebas: Siempre enviar a este número
-            test_phone = "593988076795"
-            await self.wa_client.send_text_message(test_phone, message)
+            await self.wa_client.send_text_message(phone_number, message)
             return True
         except Exception as e:
             print(f"Error enviando mensaje a {phone_number}: {e}")

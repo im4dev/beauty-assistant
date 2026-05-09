@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # Credenciales del dashboard
-    DASHBOARD_USERNAME: str = "admin"
-    DASHBOARD_PASSWORD: str = "admin"
+    DASHBOARD_USERNAME: str
+    DASHBOARD_PASSWORD: str
 
     class Config:
         env_file = ".env"
