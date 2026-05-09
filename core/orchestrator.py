@@ -272,6 +272,18 @@ class Orchestrator:
             if session.current_step == "CONFIRMING_WAITLIST":
                 # Marcar en lista de espera como rechazado
                 try:
+                    is_move_up = current_context.get("is_move_up")
+                    move_up_id = current_context.get("move_up_appointment_id")
+                    
+                    if is_move_up and move_up_id:
+                        # Si rechazó un ADELANTO, lo marcamos como NO flexible para no volver a preguntarle
+                        await self.db.execute(
+                            update(Appointment)
+                            .where(Appointment.id == move_up_id)
+                            .values(is_flexible=False)
+                        )
+                        print(f"DEBUG: Cliente rechazó adelanto. Cita {move_up_id} marcada como NO flexible.")
+                    
                     waitlist_id = current_context.get("waitlist_id")
                     if waitlist_id:
                         await self.db.execute(
@@ -280,7 +292,7 @@ class Orchestrator:
                             .values(status=WaitlistStatus.REJECTED, rejection_count=Waitlist.rejection_count + 1)
                         )
                 except Exception as e:
-                    print(f"Error actualizando waitlist en DECLINE: {e}")
+                    print(f"Error actualizando waitlist/adelanto en DECLINE: {e}")
             
             await self.session_manager.update_step(session, "IDLE")
             current_context["service"] = None
@@ -388,7 +400,7 @@ class Orchestrator:
                             start_dt = start_dt.replace(tzinfo=salon_tz)
                         
                         if active_appointment:
-                            # REPROGRAMAR CITA
+                            # REPROGRAMAR CITA EXISTENTE (Solo una a la vez)
                             success, msg = await AppointmentRescheduler.reschedule_appointment(
                                 self.db, active_appointment, start_dt, service_name
                             )

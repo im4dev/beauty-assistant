@@ -127,7 +127,7 @@ class WaitlistManager:
                     "is_move_up": True
                 })
                 await self.db.commit()
-                print(f"DEBUG: Oferta de ADELANTO enviada a {client.wa_id}")
+                print(f"DEBUG: Preguntando a {client.name} con el numero {client.wa_id} si desea reagendar")
                 # Por ahora, solo ofrecemos al primero disponible para no saturar
                 return client
 
