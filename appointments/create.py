@@ -1,8 +1,10 @@
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from db.models import Appointment, AppointmentStatus, Client, Stylist, Service
+from db.models import Appointment, AppointmentStatus, Client, Stylist, Service, Salon
 from services.availability import AvailabilityService
+from notifications.sender import NotificationSender
+import zoneinfo
 
 
 class AppointmentCreator:
@@ -88,5 +90,27 @@ class AppointmentCreator:
         db.add(new_appointment)
         await db.commit()
         await db.refresh(new_appointment)
+
+        # 5. Notificar al estilista (background task o directo)
+        try:
+            notification_sender = NotificationSender()
+            # Cargar datos necesarios para la notificación
+            stylist_obj = await db.get(Stylist, stylist_id)
+            client_obj = await db.get(Client, client_id)
+            salon_obj = await db.get(Salon, salon_id)
+            
+            if stylist_obj and stylist_obj.phone_number:
+                tz = zoneinfo.ZoneInfo(salon_obj.timezone if salon_obj and salon_obj.timezone else "UTC")
+                local_time = start_time.astimezone(tz)
+                formatted_time = local_time.strftime("%d/%m a las %H:%M")
+                
+                await notification_sender.notify_stylist_new_appointment(
+                    phone_number=stylist_obj.phone_number,
+                    client_name=client_obj.name or "Cliente",
+                    service_name=service_name,
+                    date_time=formatted_time
+                )
+        except Exception as e:
+            print(f"Error notificando al estilista: {e}")
         
         return True, "Cita creada exitosamente.", new_appointment

@@ -7,7 +7,7 @@ a clientes 24 horas y 1 hora antes de sus citas.
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from db.models import Appointment, AppointmentStatus, Client, Salon
+from db.models import Appointment, AppointmentStatus, Client, Salon, Stylist
 from notifications.sender import NotificationSender
 import asyncio
 import logging
@@ -40,6 +40,9 @@ class ReminderScheduler:
             
             # 2. Recordatorios de 1 hora
             await self._send_1h_reminders(db, now)
+
+            # 3. Recordatorios de 30 minutos para ESTILISTAS
+            await self._send_stylist_30min_reminders(db, now)
     
     async def _send_24h_reminders(self, db: AsyncSession, now: datetime):
         """
@@ -146,6 +149,59 @@ class ReminderScheduler:
                 
             except Exception as e:
                 logger.error(f"Error enviando recordatorio 1h para cita {appointment.id}: {e}")
+
+    async def _send_stylist_30min_reminders(self, db: AsyncSession, now: datetime):
+        """
+        Envía recordatorios a estilistas 30 minutos antes de la cita.
+        
+        Busca citas que:
+        - Están SCHEDULED
+        - Son en aproximadamente 30 minutos (entre 25min y 35min desde ahora)
+        - No tienen recordatorio de estilista enviado
+        """
+        reminder_window_start = now + timedelta(minutes=25)
+        reminder_window_end = now + timedelta(minutes=35)
+        
+        query = select(Appointment).where(
+            Appointment.status == AppointmentStatus.SCHEDULED,
+            Appointment.start_time >= reminder_window_start,
+            Appointment.start_time <= reminder_window_end,
+            Appointment.reminder_stylist_30min_sent == False
+        )
+        
+        result = await db.execute(query)
+        appointments = result.scalars().all()
+        
+        for appointment in appointments:
+            try:
+                # Obtener estilista, cliente y salón
+                stylist = await db.get(Stylist, appointment.stylist_id)
+                client = await db.get(Client, appointment.client_id)
+                salon = await db.get(Salon, appointment.salon_id)
+                
+                if not stylist or not stylist.phone_number or not client or not salon:
+                    continue
+                
+                # Calcular hora local del salón
+                import zoneinfo
+                salon_tz = zoneinfo.ZoneInfo(salon.timezone if salon.timezone else "UTC")
+                local_time = appointment.start_time.astimezone(salon_tz)
+                
+                # Enviar recordatorio al estilista
+                success = await self.notification_sender.notify_stylist_upcoming_appointment(
+                    phone_number=stylist.phone_number,
+                    client_name=client.name or "Cliente",
+                    service_name=appointment.service_name or "Servicio",
+                    date_time=local_time.strftime("%H:%M")
+                )
+                
+                if success:
+                    appointment.reminder_stylist_30min_sent = True
+                    await db.commit()
+                    logger.info(f"Recordatorio 30min estilista enviado para cita {appointment.id}")
+                
+            except Exception as e:
+                logger.error(f"Error enviando recordatorio 30min estilista para cita {appointment.id}: {e}")
     
     async def start_background_task(self, interval_minutes: int = 5):
         """

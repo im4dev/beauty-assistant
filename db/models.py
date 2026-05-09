@@ -8,10 +8,10 @@ from sqlalchemy.orm import relationship, declarative_base
 Base = declarative_base()
 
 class AppointmentStatus(str, Enum):
-    SCHEDULED = "scheduled"
-    CANCELLED = "cancelled"
-    COMPLETED = "completed"
-    RESCHEDULED = "rescheduled"
+    SCHEDULED = "SCHEDULED"
+    CANCELLED = "CANCELLED"
+    COMPLETED = "COMPLETED"
+    RESCHEDULED = "RESCHEDULED"
 
 class Salon(Base):
     __tablename__ = "salons"
@@ -33,6 +33,7 @@ class Stylist(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     salon_id = Column(UUID(as_uuid=True), ForeignKey("salons.id"), nullable=False)
     name = Column(String(255), nullable=False)
+    phone_number = Column(String(50)) # WhatsApp del estilista
     specialty = Column(String(255)) # Ej: "Colorista", "Corte Caballero"
     is_active = Column(Boolean, default=True)
 
@@ -67,6 +68,7 @@ class Appointment(Base):
     # Recordatorios
     reminder_24h_sent = Column(Boolean, default=False)
     reminder_1h_sent = Column(Boolean, default=False)
+    reminder_stylist_30min_sent = Column(Boolean, default=False)
     
     client = relationship("Client", back_populates="appointments")
     stylist = relationship("Stylist", back_populates="appointments")

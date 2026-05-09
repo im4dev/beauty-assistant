@@ -121,3 +121,75 @@ class NotificationSender:
             True si se envió exitosamente
         """
         return await self.send_to_client(salon_phone, message)
+
+    # --- NOTIFICACIONES PARA ESTILISTAS ---
+
+    async def notify_stylist_new_appointment(
+        self,
+        phone_number: str,
+        client_name: str,
+        service_name: str,
+        date_time: str
+    ) -> bool:
+        """Notifica al estilista sobre una nueva cita agendada."""
+        if not phone_number: return False
+        message = (
+            f"🆕 *Nueva cita agendada*\n\n"
+            f"👤 Cliente: {client_name}\n"
+            f"✂️ Servicio: {service_name}\n"
+            f"📅 Fecha: {date_time}\n\n"
+            f"¡Prepárate! ✨"
+        )
+        return await self.send_to_client(phone_number, message)
+
+    async def notify_stylist_appointment_cancelled(
+        self,
+        phone_number: str,
+        client_name: str,
+        date_time: str
+    ) -> bool:
+        """Notifica al estilista sobre una cancelación."""
+        if not phone_number: return False
+        message = (
+            f"❌ *Cita cancelada*\n\n"
+            f"👤 Cliente: {client_name}\n"
+            f"📅 Fecha: {date_time}\n\n"
+            f"Este horario ahora está disponible."
+        )
+        return await self.send_to_client(phone_number, message)
+
+    async def notify_stylist_appointment_rescheduled(
+        self,
+        phone_number: str,
+        client_name: str,
+        old_date_time: str,
+        new_date_time: str
+    ) -> bool:
+        """Notifica al estilista sobre una reprogramación."""
+        if not phone_number: return False
+        message = (
+            f"🔄 *Cita reprogramada*\n\n"
+            f"👤 Cliente: {client_name}\n"
+            f"📅 De: {old_date_time}\n"
+            f"📅 A: {new_date_time}\n\n"
+            f"Favor de actualizar tu agenda."
+        )
+        return await self.send_to_client(phone_number, message)
+
+    async def notify_stylist_upcoming_appointment(
+        self,
+        phone_number: str,
+        client_name: str,
+        service_name: str,
+        date_time: str
+    ) -> bool:
+        """Recordatorio de 30 minutos para el estilista."""
+        if not phone_number: return False
+        message = (
+            f"⏰ *Próximo cliente en 30 min*\n\n"
+            f"👤 Cliente: {client_name}\n"
+            f"✂️ Servicio: {service_name}\n"
+            f"🕒 Hora: {date_time}\n\n"
+            f"¡Casi es hora!"
+        )
+        return await self.send_to_client(phone_number, message)

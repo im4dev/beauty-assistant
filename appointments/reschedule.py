@@ -1,8 +1,10 @@
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from db.models import Appointment, AppointmentStatus, Service, Salon
+from db.models import Appointment, AppointmentStatus, Service, Salon, Stylist, Client
 from services.availability import AvailabilityService
+from notifications.sender import NotificationSender
+import zoneinfo
 
 
 class AppointmentRescheduler:
@@ -73,5 +75,21 @@ class AppointmentRescheduler:
         
         old_local = old_time.astimezone(salon_tz)
         new_local = new_start_time.astimezone(salon_tz)
+        
+        # Notificar al estilista
+        try:
+            notification_sender = NotificationSender()
+            stylist_obj = await db.get(Stylist, appointment.stylist_id)
+            client_obj = await db.get(Client, appointment.client_id)
+            
+            if stylist_obj and stylist_obj.phone_number:
+                await notification_sender.notify_stylist_appointment_rescheduled(
+                    phone_number=stylist_obj.phone_number,
+                    client_name=client_obj.name or "Cliente",
+                    old_date_time=old_local.strftime("%d/%m a las %H:%M"),
+                    new_date_time=new_local.strftime("%d/%m a las %H:%M")
+                )
+        except Exception as e:
+            print(f"Error notificando al estilista en reprogramación: {e}")
         
         return True, f"Cita reprogramada de {old_local.strftime('%d/%m %H:%M')} a {new_local.strftime('%d/%m %H:%M')}."
