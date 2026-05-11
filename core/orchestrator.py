@@ -91,17 +91,26 @@ class Orchestrator:
         res = await self.db.execute(select(Service).where(Service.salon_id == salon_id, Service.is_active == True))
         db_services = res.scalars().all()
         
-        # Agrupamos por categoría
+        # Agrupamos por categoría con normalización para evitar duplicados por tildes/mayúsculas
         services_by_cat = {}
+        import unicodedata
+        def normalize_cat(c):
+            if not c: return "Otros"
+            # Quitar tildes y normalizar para comparar
+            n = ''.join(ch for ch in unicodedata.normalize('NFD', c) if unicodedata.category(ch) != 'Mn')
+            mapping = {"colorimetria": "Colorimetría", "barberia": "Barbería", "peluqueria": "Peluquería", "estetica": "Estética"}
+            return mapping.get(n.lower(), n.title())
+
         for s in db_services:
-            cat = s.category or "Otros"
+            cat = normalize_cat(s.category)
             if cat not in services_by_cat:
-                services_by_cat[cat] = []
-            services_by_cat[cat].append(f"{s.name} ({s.duration_minutes} min): ${s.price}")
+                services_by_cat[cat] = set() # Usar set para evitar servicios idénticos en la misma categoría
+            services_by_cat[cat].add(f"{s.name} ({s.duration_minutes} min): ${s.price}")
         
         catalogo_str = ""
-        for cat, items in services_by_cat.items():
-            catalogo_str += f"\n{cat}:\n" + "\n".join([f"- {i}" for i in items]) + "\n"
+        for cat in sorted(services_by_cat.keys()):
+            items = sorted(list(services_by_cat[cat]))
+            catalogo_str += f"\n*{cat}*:\n- " + "\n- ".join(items) + "\n"
         
         history_list = current_context.get("last_messages", [])
         history_list.append({"role": "user", "content": message_text})
