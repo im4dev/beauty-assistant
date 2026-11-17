@@ -3,7 +3,7 @@ import os
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 
-DATABASE_URL = "postgresql+asyncpg://postgres:VWhVj4FflWYZcmv2@db.etjbilmwkrlvkjlngero.supabase.co:5432/postgres"
+DATABASE_URL = os.environ["DATABASE_URL"]
 
 async def test_conn():
     print(f"Connecting to {DATABASE_URL}...")

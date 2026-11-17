@@ -1,13 +1,16 @@
+# Entorno local: app + Postgres. Las credenciales salen de .env
+# (POSTGRES_PASSWORD es obligatoria). pgAdmin solo arranca con
+# `docker compose --profile tools up`.
 services:
   db:
     image: postgres:15
     container_name: postgres-db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: tu_password_segura
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}
       POSTGRES_DB: postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -22,15 +25,15 @@ services:
     container_name: beauty-assistant
     ports:
       - "8000:8000"
-    environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:tu_password_segura@db:5432/postgres
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
     depends_on:
       - db
     restart: always
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -46,16 +49,16 @@ services:
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: pgadmin
+    profiles: ["tools"]
     environment:
-      PGADMIN_DEFAULT_EMAIL: im2developer@gmail.com
-      PGADMIN_DEFAULT_PASSWORD: aB3xYz-kM_9pQ2wL-vNj
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?Define PGADMIN_PASSWORD en .env}
     ports:
-      - "5050:80"
+      - "127.0.0.1:5050:80"
     depends_on:
       - db
     networks:
       - app-network
-    restart: always
 
 volumes:
   postgres_data:

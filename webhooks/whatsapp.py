@@ -1,5 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException, Query
-from httpcore import request
+from fastapi import APIRouter, Request, HTTPException, Query, BackgroundTasks
 from core.orchestrator import Orchestrator
 from webhooks.verify import verify_signature
 from tenants.resolver import resolve_tenant
@@ -37,8 +36,25 @@ async def verify_webhook(
 
 # ─── Recepción de mensajes entrantes ─────────────────────────────────────────
 
+# IDs de mensajes ya procesados. Meta reintenta la entrega si no recibe 200
+# rápido, así que filtramos duplicados (en memoria: basta con un solo proceso).
+_seen_message_ids: dict[str, float] = {}
+_SEEN_TTL_SECONDS = 600
+
+
+def _already_seen(message_id: str) -> bool:
+    now = time.time()
+    for mid, ts in list(_seen_message_ids.items()):
+        if now - ts > _SEEN_TTL_SECONDS:
+            del _seen_message_ids[mid]
+    if message_id in _seen_message_ids:
+        return True
+    _seen_message_ids[message_id] = now
+    return False
+
+
 @router.post("")
-async def receive_message(request: Request):
+async def receive_message(request: Request, background_tasks: BackgroundTasks):
     """
     Meta envía aquí todos los mensajes entrantes.
     Estructura típica del body:
@@ -53,23 +69,10 @@ async def receive_message(request: Request):
         }]
       }]
     }
+
+    Respondemos 200 de inmediato y procesamos en segundo plano: si tardamos
+    (el LLM puede tardar varios segundos), Meta reenvía el mismo mensaje.
     """
-    data = await request.json()
-
-    # Extract Meta timestamp (coming in seconds)
-    entry = data.get("entry", [{}])[0]
-    changes = entry.get("changes", [{}])[0]
-    value = changes.get("value", {})
-    message = value.get("messages", [{}])[0]
-    
-    msg_timestamp = int(message.get("timestamp", 0))
-    current_time = int(time.time())
-
-    # REGLA DE ORO: Si el mensaje tiene más de 120 segundos, no lo proceses
-    if current_time - msg_timestamp > 120:
-        print("⏳ Ignorando mensaje antiguo para evitar spam.")
-        return {"status": "ignored"}
-    
     # 1. Validar firma de Meta (seguridad)
     body_bytes = await request.body()
     signature = request.headers.get("X-Hub-Signature-256", "")
@@ -83,6 +86,7 @@ async def receive_message(request: Request):
         return {"status": "ignored"}
 
     # 3. Extraer mensajes del payload
+    current_time = int(time.time())
     for entry in payload.get("entry", []):
         for change in entry.get("changes", []):
             value = change.get("value", {})
@@ -95,28 +99,44 @@ async def receive_message(request: Request):
                     logger.info(f"Tipo de mensaje ignorado: {message.get('type')}")
                     continue
 
-                sender_phone = message["from"]
-                text = message["text"]["body"]
-                message_id = message["id"]
+                # REGLA DE ORO: Si el mensaje tiene más de 120 segundos, no lo proceses
+                if current_time - int(message.get("timestamp", 0)) > 120:
+                    logger.info("⏳ Ignorando mensaje antiguo para evitar spam.")
+                    continue
 
-                logger.info(f"Mensaje recibido de {sender_phone}: {text[:50]}")
+                if _already_seen(message["id"]):
+                    logger.info(f"Mensaje duplicado ignorado: {message['id']}")
+                    continue
 
-                # 5. Pasar al orquestador para procesar
-                async with AsyncSessionLocal() as db_session:
-                    # 4. Resolver a qué salón pertenece este número destino
-                    tenant = await resolve_tenant(phone_number_id, db_session)
+                background_tasks.add_task(
+                    process_message,
+                    phone_number_id,
+                    message["from"],
+                    message["text"]["body"],
+                )
 
-                    # Instanciamos el orquestador con la sesión de DB
-                    orchestrator = Orchestrator(db_session)
-                    
-                    # Llamamos al método handle_message que definimos
-                    response_text = await orchestrator.handle_message(
-                        phone_number=sender_phone,
-                        message_text=text,
-                        salon_id=tenant.id  # El ID del salón que resolvió tu tenants/resolver.py
-                    )
-                    
-                    # 2. SEND THE ACTUAL RESPONSE TO WHATSAPP 🚀    
-                    if response_text:   
-                        await wa_client.send_text_message(sender_phone, response_text)  
     return {"status": "ok"}
+
+
+async def process_message(phone_number_id: str, sender_phone: str, text: str):
+    logger.info(f"Mensaje recibido de {sender_phone}: {text[:50]}")
+    try:
+        async with AsyncSessionLocal() as db_session:
+            # 4. Resolver a qué salón pertenece este número destino
+            tenant = await resolve_tenant(phone_number_id, db_session)
+            if not tenant:
+                return
+
+            # 5. Pasar al orquestador para procesar
+            orchestrator = Orchestrator(db_session)
+            response_text = await orchestrator.handle_message(
+                phone_number=sender_phone,
+                message_text=text,
+                salon_id=tenant.id,
+            )
+
+            # 6. Enviar la respuesta por WhatsApp 🚀
+            if response_text:
+                await wa_client.send_text_message(sender_phone, response_text)
+    except Exception:
+        logger.exception(f"❌ Error procesando mensaje de {sender_phone}")

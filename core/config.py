@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     APP_SECRET: str = ""        # App Secret de tu app en Meta
     WA_ACCESS_TOKEN: str        # Token de acceso permanente de WhatsApp
     WHATSAPP_PHONE_ID: str 
+    WA_API_VERSION: str = "v24.0"  # Versión de la Graph API de Meta
 
     # DeepSeek
     DEEPSEEK_API_KEY: str
@@ -25,6 +26,8 @@ class Settings(BaseSettings):
     # Credenciales del dashboard
     DASHBOARD_USERNAME: str
     DASHBOARD_PASSWORD: str
+    SECRET_KEY: str = ""         # Firma de tokens del dashboard (si está vacío se deriva de DASHBOARD_PASSWORD)
+    TOKEN_TTL_HOURS: int = 12
 
     class Config:
         env_file = ".env"

@@ -5,7 +5,7 @@ class WhatsAppClient:
     def __init__(self):
         self.token = settings.WA_ACCESS_TOKEN
         self.phone_number_id = settings.WHATSAPP_PHONE_ID
-        self.base_url = f"https://graph.facebook.com/v19.0/{self.phone_number_id}/messages"
+        self.base_url = f"https://graph.facebook.com/{settings.WA_API_VERSION}/{self.phone_number_id}/messages"
 
     async def send_text_message(self, to_phone: str, message: str):
         headers = {

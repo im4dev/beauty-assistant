@@ -1,13 +1,16 @@
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, text
 from sqlalchemy.orm import DeclarativeBase
 from datetime import datetime, timedelta
 from typing import List
 import asyncio
+import hashlib
+import hmac
 import json
+import time
 from db.connection import AsyncSessionLocal
 from db.models import Appointment, Salon, Client, Stylist, AppointmentStatus, Waitlist
 from core.config import settings
@@ -16,12 +19,6 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["Dashboard"])
 
-# Motor PostgreSQL para Supabase (directo, sin anon key restrictions)
-if settings.SUPABASE_URL:
-    supabase_engine = create_async_engine(settings.DATABASE_URL, echo=False)
-    SupabaseSession = async_sessionmaker(supabase_engine, class_=AsyncSession, expire_on_commit=False)
-else:
-    SupabaseSession = None
 
 
 # Dependency para obtener la sesión de DB
@@ -31,6 +28,35 @@ async def get_db():
 
 
 # ─── Autenticación con usuario/contraseña ─────────────────────────────────────
+
+def _token_key() -> bytes:
+    return (settings.SECRET_KEY or f"dashboard:{settings.DASHBOARD_PASSWORD}").encode()
+
+
+def create_token(username: str) -> str:
+    """Token firmado: <usuario>.<expira_unix>.<hmac>"""
+    expires = int(time.time()) + settings.TOKEN_TTL_HOURS * 3600
+    payload = f"{username}.{expires}"
+    sig = hmac.new(_token_key(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{sig}"
+
+
+def require_auth(
+    authorization: str = Header(None),
+    token: str = Query(None),  # EventSource (SSE) no permite enviar headers
+):
+    raw = token
+    if authorization and authorization.startswith("Bearer "):
+        raw = authorization[len("Bearer "):]
+    try:
+        username, expires, sig = raw.rsplit(".", 2)
+        expected = hmac.new(_token_key(), f"{username}.{expires}".encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(sig, expected) and int(expires) > time.time():
+            return username
+    except (AttributeError, ValueError):
+        pass
+    raise HTTPException(status_code=401, detail="No autenticado")
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -52,24 +78,21 @@ async def login(credentials: LoginRequest):
     
     return {
         "username": username,
-        "token": f"temp_token_{username}",  # Simple token para la sesión
+        "token": create_token(username),
         "message": "Autenticado correctamente",
     }
 
 
 # ─── Obtener todos los salones (desde PostgreSQL directo) ────────────────────
 
-@router.get("/salons")
+@router.get("/salons", dependencies=[Depends(require_auth)])
 async def get_salons():
     """
     Obtiene todos los salones desde PostgreSQL de Supabase.
     Usa conexión directa en lugar de cliente anon para evitar restricciones RLS.
     """
-    if not SupabaseSession:
-        raise HTTPException(status_code=500, detail="PostgreSQL no configurado")
-    
     try:
-        async with SupabaseSession() as session:
+        async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(Salon).where(Salon.is_active == True)
             )
@@ -93,7 +116,7 @@ async def get_salons():
 
 # ─── SSE: Stream de citas en tiempo real ──────────────────────────────────────
 
-@router.get("/salons/{salon_id}/appointments/stream")
+@router.get("/salons/{salon_id}/appointments/stream", dependencies=[Depends(require_auth)])
 async def stream_appointments(salon_id: str, date: str = None):
     """
     SSE endpoint que envía actualizaciones de citas en tiempo real para una fecha específica.
@@ -171,7 +194,7 @@ async def stream_appointments(salon_id: str, date: str = None):
         }
     )
 
-@router.get("/salons/{salon_id}/appointments")
+@router.get("/salons/{salon_id}/appointments", dependencies=[Depends(require_auth)])
 async def get_appointments(
     salon_id: str,
     date: str = Query(None),  # formato: YYYY-MM-DD
@@ -252,7 +275,7 @@ async def get_appointments(
 
 # ─── Estadísticas del salón ───────────────────────────────────────────────────
 
-@router.get("/salons/{salon_id}/stats")
+@router.get("/salons/{salon_id}/stats", dependencies=[Depends(require_auth)])
 async def get_stats(
     salon_id: str,
     days: int = Query(7),  # últimos N días
@@ -335,7 +358,7 @@ async def get_stats(
 
 # ─── Próximas citas (siguientes 7 días) ──────────────────────────────────────
 
-@router.get("/salons/{salon_id}/upcoming")
+@router.get("/salons/{salon_id}/upcoming", dependencies=[Depends(require_auth)])
 async def get_upcoming(salon_id: str):
     """Próximas 10 citas confirmadas"""
     from sqlalchemy.orm import joinedload
@@ -375,7 +398,7 @@ async def get_upcoming(salon_id: str):
 
 # ─── Webhook para respuestas de lista de espera ───────────────────────────────
 
-@router.post("/waitlist/respond")
+@router.post("/waitlist/respond", dependencies=[Depends(require_auth)])
 async def waitlist_response(
     waitlist_id: str,
     accepted: bool,

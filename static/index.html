@@ -927,6 +927,7 @@
 
                 const data = await response.json();
 
+                currentToken = data.token;
                 localStorage.setItem('username', username);
                 localStorage.setItem('token', data.token);
                 localStorage.setItem('authenticated', 'true');
@@ -947,8 +948,10 @@
         async function loadStats() {
             try {
                 const response = await fetch(
-                    `${API_BASE}/api/salons/${currentSalonId}/stats?days=7`
+                    `${API_BASE}/api/salons/${currentSalonId}/stats?days=7`,
+                    { headers: { 'Authorization': `Bearer ${currentToken}` } }
                 );
+                if (response.status === 401) return logout();
                 const data = await response.json();
 
                 document.getElementById('statConfirmed').textContent = data.confirmed;
@@ -966,6 +969,7 @@
         }
 
         function logout() {
+            if (eventSource) eventSource.close();
             localStorage.removeItem('username');
             localStorage.removeItem('token');
             localStorage.removeItem('authenticated');
@@ -995,6 +999,7 @@
                     headers: { 'Authorization': `Bearer ${currentToken}` }
                 });
 
+                if (response.status === 401) return logout();
                 if (!response.ok) throw new Error('Error al cargar salones');
 
                 const data = await response.json();
@@ -1039,7 +1044,7 @@
             console.log('Conectando SSE para salon:', currentSalonId, 'Fecha:', targetDate);
 
             eventSource = new EventSource(
-                `${API_BASE}/api/salons/${currentSalonId}/appointments/stream?date=${targetDate}`
+                `${API_BASE}/api/salons/${currentSalonId}/appointments/stream?date=${targetDate}&token=${encodeURIComponent(currentToken)}`
             );
 
             eventSource.onmessage = function (event) {
