@@ -27,6 +27,9 @@ class Orchestrator:
         # 1. Recuperar sesión, cliente y salón (para timezone)
         
         session = await self.session_manager.get_or_create(phone_number, salon_id)
+        # Paso en el que estaba la conversación ANTES de este mensaje (el de la
+        # sesión puede cambiar durante el procesamiento)
+        step_at_start = session.current_step
         
         result = await self.db.execute(
             select(Client).where(Client.wa_id == phone_number, Client.salon_id == salon_id)
@@ -61,6 +64,19 @@ class Orchestrator:
                 await self.db.commit()
                 # Refrescamos para tener el objeto client disponible para el resto del flujo
                 client = new_client
+
+                # Si solo se presentó, la respuesta del análisis de registro basta:
+                # evitamos una segunda llamada al LLM
+                if analysis.get("intent") == "GREETING" and analysis.get("response_message"):
+                    response_message = analysis["response_message"]
+                    context = json.loads(session.context_data) if session.context_data else {}
+                    context["last_messages"] = (context.get("last_messages", []) + [
+                        {"role": "user", "content": message_text},
+                        {"role": "assistant", "content": response_message},
+                    ])[-10:]
+                    session.context_data = json.dumps(context)
+                    await self.db.commit()
+                    return response_message
             else:
                 # Si no se pudo extraer un nombre, preguntamos amablemente
                 return "¡Hola! ✨ Bienvenido. No te tengo en mis registros, ¿cómo te llamas?"
@@ -75,6 +91,7 @@ class Orchestrator:
                 Appointment.start_time >= now, 
                 Appointment.status == AppointmentStatus.SCHEDULED
             )
+            .order_by(Appointment.start_time)
         )
         active_appointment = appointment_res.scalars().first()
         if active_appointment:
@@ -278,8 +295,13 @@ class Orchestrator:
             await self.session_manager.update_step(session, "CONFIRMING_APPOINTMENT")
         
         # Si el intent es CANCEL_APPOINTMENT y tenemos cita activa, pasamos a CONFIRMING_CANCELLATION
-        if intent == "CANCEL_APPOINTMENT" and active_appointment:
+        if intent == "CANCEL_APPOINTMENT" and active_appointment and step_at_start != "CONFIRMING_CANCELLATION":
             await self.session_manager.update_step(session, "CONFIRMING_CANCELLATION")
+            fecha_cita = active_appointment.start_time.astimezone(salon_tz).strftime('%d/%m a las %H:%M')
+            response_message = (
+                f"¿Seguro que quieres cancelar tu cita de {active_appointment.service_name} "
+                f"del {fecha_cita}? Responde *sí* para cancelarla o *no* para mantenerla."
+            )
 
         # 7. Ejecutar acción de CONFIRM o DECLINE si aplica
         if intent == "DECLINE":
@@ -314,7 +336,7 @@ class Orchestrator:
             current_context["datetime_iso"] = None
 
         # Si el intent es CONFIRM (o CANCEL_APPOINTMENT pero ya estábamos confirmando)
-        if intent == "CONFIRM" or (intent == "CANCEL_APPOINTMENT" and session.current_step == "CONFIRMING_CANCELLATION"):
+        if intent == "CONFIRM" or (intent == "CANCEL_APPOINTMENT" and step_at_start == "CONFIRMING_CANCELLATION"):
             print(f"DEBUG: Ejecutando confirmación. Intent: {intent}, Step actual: {session.current_step}")
             
             if session.current_step == "CONFIRMING_WAITLIST":
@@ -363,11 +385,7 @@ class Orchestrator:
                             
                             current_context = {}
                             await self.session_manager.update_step(session, "IDLE", context=current_context)
-                            response_message = f"✅ ¡Excelente! Tu cita ha sido agendada para el {start_dt.astimezone(salon_tz).strftime('%d/%m a las %H:%M')}. Nos vemos pronto."
-                            
-                            # Enviar notificación de confirmación
-                            await self.notification_sender.notify_appointment_confirmed(
-                                phone_number,
+                            response_message = self.notification_sender.appointment_confirmed_text(
                                 service_name,
                                 start_dt.astimezone(salon_tz).strftime('%d/%m a las %H:%M')
                             )
@@ -388,10 +406,7 @@ class Orchestrator:
                         if success:
                             current_context = {}
                             await self.session_manager.update_step(session, "IDLE", context=current_context)
-                            response_message = msg
-                            # Enviar notificación al cliente
-                            await self.notification_sender.notify_appointment_cancelled(
-                                phone_number,
+                            response_message = self.notification_sender.appointment_cancelled_text(
                                 active_appointment.start_time.astimezone(salon_tz).strftime('%d/%m a las %H:%M')
                             )
                             print(f"DEBUG: Cita cancelada con éxito.")
@@ -424,12 +439,10 @@ class Orchestrator:
                             if success:
                                 current_context = {}
                                 await self.session_manager.update_step(session, "IDLE", context=current_context)
-                                response_message = msg
-                                # Enviar notificación de confirmación
-                                await self.notification_sender.notify_appointment_confirmed(
-                                    phone_number,
+                                response_message = self.notification_sender.appointment_confirmed_text(
                                     service_name,
-                                    start_dt.astimezone(salon_tz).strftime('%d/%m a las %H:%M')
+                                    start_dt.astimezone(salon_tz).strftime('%d/%m a las %H:%M'),
+                                    title="🔄 ¡Cita reprogramada!"
                                 )
                             else:
                                 current_context["datetime_iso"] = None
@@ -449,10 +462,7 @@ class Orchestrator:
                             if success:
                                 current_context = {}
                                 await self.session_manager.update_step(session, "IDLE", context=current_context)
-                                response_message = msg
-                                # Enviar notificación de confirmación
-                                await self.notification_sender.notify_appointment_confirmed(
-                                    phone_number,
+                                response_message = self.notification_sender.appointment_confirmed_text(
                                     service_name,
                                     start_dt.astimezone(salon_tz).strftime('%d/%m a las %H:%M')
                                 )
@@ -465,9 +475,10 @@ class Orchestrator:
                         response_message = "Hubo un problema técnico al guardar tu cita. ¿Podrías intentarlo de nuevo?"
 
         # --- GUARDAR HISTORIAL ---
-        history_list = current_context.get("last_messages", [])
+        # history_list ya incluye el mensaje del usuario; se usa la variable local
+        # porque current_context pudo reiniciarse tras agendar/cancelar
         history_list.append({"role": "assistant", "content": response_message})
-        current_context["last_messages"] = history_list
+        current_context["last_messages"] = history_list[-10:]
 
         session.context_data = json.dumps(current_context)
         await self.db.commit()

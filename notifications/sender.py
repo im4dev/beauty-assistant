@@ -54,6 +54,30 @@ class NotificationSender:
         
         return await self.send_to_client(phone_number, message)
     
+    @staticmethod
+    def appointment_confirmed_text(
+        service_name: str,
+        date_time: str,
+        stylist_name: str = None,
+        title: str = "✅ ¡Cita confirmada!"
+    ) -> str:
+        """Texto de confirmación de cita (se usa como respuesta directa o como aviso)."""
+        stylist_text = f" con {stylist_name}" if stylist_name else ""
+        return (
+            f"{title}\n\n"
+            f"Servicio: {service_name}{stylist_text}\n"
+            f"Fecha y hora: {date_time}\n\n"
+            f"Te recordaremos 1 hora antes de tu cita. ¡Nos vemos!"
+        )
+
+    @staticmethod
+    def appointment_cancelled_text(date_time: str) -> str:
+        """Texto de cancelación de cita (se usa como respuesta directa o como aviso)."""
+        return (
+            f"Tu cita del {date_time} ha sido cancelada.\n\n"
+            f"Si deseas reagendar, simplemente escríbenos y buscaremos un nuevo horario."
+        )
+
     async def notify_appointment_confirmed(
         self,
         phone_number: str,
@@ -73,14 +97,7 @@ class NotificationSender:
         Returns:
             True si se envió exitosamente
         """
-        stylist_text = f" con {stylist_name}" if stylist_name else ""
-        message = (
-            f"✅ ¡Cita confirmada!\n\n"
-            f"Servicio: {service_name}{stylist_text}\n"
-            f"Fecha y hora: {date_time}\n\n"
-            f"Te recordaremos 1 hora antes de tu cita. ¡Nos vemos!"
-        )
-        
+        message = self.appointment_confirmed_text(service_name, date_time, stylist_name)
         return await self.send_to_client(phone_number, message)
     
     async def notify_appointment_cancelled(
@@ -98,11 +115,7 @@ class NotificationSender:
         Returns:
             True si se envió exitosamente
         """
-        message = (
-            f"Tu cita del {date_time} ha sido cancelada.\n\n"
-            f"Si deseas reagendar, simplemente escríbenos y buscaremos un nuevo horario."
-        )
-        
+        message = self.appointment_cancelled_text(date_time)
         return await self.send_to_client(phone_number, message)
     
     async def notify_salon(

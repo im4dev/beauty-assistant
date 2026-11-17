@@ -28,7 +28,20 @@ class WaitlistManager:
         preferred_stylist_id: str = None,
         preferred_service_id: str = None
     ) -> Waitlist:
-        """Agrega un cliente a la lista de espera"""
+        """Agrega un cliente a la lista de espera (sin duplicar si ya está esperando)"""
+        existing = await self.db.execute(
+            select(Waitlist).where(
+                Waitlist.salon_id == salon_id,
+                Waitlist.client_id == client_id,
+                Waitlist.request_type == request_type,
+                Waitlist.preferred_service_id == preferred_service_id,
+                Waitlist.status == WaitlistStatus.WAITING
+            )
+        )
+        existing_entry = existing.scalars().first()
+        if existing_entry:
+            return existing_entry
+
         waitlist_entry = Waitlist(
             salon_id=salon_id,
             client_id=client_id,
